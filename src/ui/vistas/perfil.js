@@ -4,6 +4,7 @@ import { paisesOrdenados, pais } from '../../data/paises.js';
 import { progresion, RANGOS } from '../../core/nivel.js';
 import { indiceConfianza } from '../../core/validacion.js';
 import { accion } from '../../data/acciones.js';
+import { descargar } from '../descargas.js';
 
 export function vistaPerfil(ctx) {
   const estado = ctx.almacen.get();
@@ -102,14 +103,15 @@ export function vistaPerfil(ctx) {
     el('div', { clase: 'fila envuelve', estilo: 'gap:9px' }, [
       el('button', {
         clase: 'btn', texto: '⬇️ Exportar JSON',
-        onclick: () => {
-          const blob = new Blob([ctx.almacen.exportar()], { type: 'application/json' });
-          const a = document.createElement('a');
-          a.href = URL.createObjectURL(blob);
-          a.download = `atmosphere-${new Date().toISOString().slice(0, 10)}.json`;
-          a.click();
-          URL.revokeObjectURL(a.href);
-          toast({ titulo: 'Datos exportados', icono: '⬇️' });
+        onclick: async () => {
+          const res = await descargar({
+            nombre: `atmosphere-${new Date().toISOString().slice(0, 10)}.json`,
+            contenido: ctx.almacen.exportar(),
+            tipo: 'application/json',
+          });
+          toast(res.ok
+            ? { titulo: 'Datos exportados', texto: `${estado.registros.length} registros`, icono: '⬇️' }
+            : { titulo: 'No se pudo exportar', texto: res.motivo, tipo: 'error', icono: '⛔' });
         },
       }),
       el('button', {
@@ -130,7 +132,7 @@ export function vistaPerfil(ctx) {
       }),
       el('button', {
         clase: 'btn', texto: '📊 Exportar CSV de registros',
-        onclick: () => {
+        onclick: async () => {
           const filas = [['fecha', 'accion', 'categoria', 'cantidad', 'unidad', 'co2e_kg', 'agua_l', 'residuo_kg', 'puntos']];
           for (const reg of estado.registros) {
             const a = accion(reg.accionId);
@@ -138,13 +140,14 @@ export function vistaPerfil(ctx) {
               reg.impacto.co2e, reg.impacto.agua, reg.impacto.residuo, reg.puntos]);
           }
           const csv = filas.map((f) => f.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
-          const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-          const a = document.createElement('a');
-          a.href = URL.createObjectURL(blob);
-          a.download = `atmosphere-registros-${new Date().toISOString().slice(0, 10)}.csv`;
-          a.click();
-          URL.revokeObjectURL(a.href);
-          toast({ titulo: 'CSV exportado', texto: `${estado.registros.length} registros`, icono: '📊' });
+          const res = await descargar({
+            nombre: `atmosphere-registros-${new Date().toISOString().slice(0, 10)}.csv`,
+            contenido: csv,
+            tipo: 'text/csv;charset=utf-8',
+          });
+          toast(res.ok
+            ? { titulo: 'CSV exportado', texto: `${estado.registros.length} registros`, icono: '📊' }
+            : { titulo: 'No se pudo exportar', texto: res.motivo, tipo: 'error', icono: '⛔' });
         },
       }),
       el('button', {

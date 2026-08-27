@@ -5810,6 +5810,90 @@ function tabla(filas) {
   __exp.vistaCiencia = vistaCiencia;
 });
 
+__def("src/ui/descargas.js", function (__exp, __req) {
+/**
+ * descargas.js — Entrega de archivos al usuario en cualquier entorno.
+ *
+ * La app corre en tres sitios distintos y solo uno admite el truco clasico
+ * del enlace <a download>:
+ *   - servida por http o abierta como archivo local -> enlace con Blob
+ *   - publicada como Artifact -> el visor bloquea las descargas iniciadas por
+ *     la pagina; hay que pasar por la capacidad `downloads`, que ademas pide
+ *     confirmacion al usuario y puede ser rechazada.
+ * Este modulo detecta el entorno y usa la via que funcione, sin que las vistas
+ * tengan que saber nada de eso.
+ */
+
+/** Extensiones que el visor de Artifacts admite siempre. */
+const EXTENSIONES_BASE = new Set(['txt', 'json', 'md', 'csv']);
+
+async function capacidadDescargas() {
+  try {
+    if (typeof window === 'undefined' || !window.claude || typeof window.claude.use !== 'function') return null;
+    return await window.claude.use('downloads');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Entrega un archivo generado.
+ * @param {{nombre:string, contenido:string|Blob, tipo?:string}} args
+ * @returns {Promise<{ok:boolean, via:string, motivo?:string}>}
+ */
+async function descargar({ nombre, contenido, tipo = 'text/plain;charset=utf-8' }) {
+  const dl = await capacidadDescargas();
+
+  if (dl) {
+    try {
+      await dl.save({ filename: nombre, data: contenido });
+      return { ok: true, via: 'artifact' };
+    } catch (e) {
+      const codigo = e?.code || 'unavailable';
+      if (codigo === 'declined') return { ok: false, via: 'artifact', motivo: 'Descarga cancelada.' };
+      if (codigo === 'extension_not_enabled') {
+        // El visor no admite esta extension: se ofrece el mismo contenido
+        // como texto plano en vez de dejar al usuario sin nada.
+        try {
+          await dl.save({ filename: nombre.replace(/\.[^.]+$/, '.txt'), data: contenido });
+          return { ok: true, via: 'artifact-txt' };
+        } catch {
+          return { ok: false, via: 'artifact', motivo: 'Este visor no admite ese tipo de archivo.' };
+        }
+      }
+      if (codigo === 'too_large') return { ok: false, via: 'artifact', motivo: 'El archivo supera el limite de 16 MB.' };
+      if (codigo === 'rate_limited') return { ok: false, via: 'artifact', motivo: 'Hay otra descarga en curso. Intentalo de nuevo en unos segundos.' };
+      return { ok: false, via: 'artifact', motivo: 'Las descargas no estan disponibles en este visor.' };
+    }
+  }
+
+  // Entorno normal: enlace con Blob.
+  try {
+    const blob = contenido instanceof Blob ? contenido : new Blob([contenido], { type: tipo });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = nombre;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return { ok: true, via: 'blob' };
+  } catch (e) {
+    return { ok: false, via: 'blob', motivo: 'No se pudo generar el archivo.' };
+  }
+}
+
+/** Indica si la vista actual puede entregar archivos. */
+async function hayDescargas() {
+  if (await capacidadDescargas()) return true;
+  return typeof document !== 'undefined' && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function';
+}
+
+  __exp.descargar = descargar;
+  __exp.hayDescargas = hayDescargas;
+});
+
 __def("src/ui/vistas/perfil.js", function (__exp, __req) {
 /** perfil.js — Perfil, ajustes, datos y privacidad. */
 const { el, num, co2, litros, toast, modal, tarjetaMetrica, progreso, haceCuanto } = __req("src/ui/componentes.js");
@@ -5817,6 +5901,7 @@ const { paisesOrdenados, pais } = __req("src/data/paises.js");
 const { progresion, RANGOS } = __req("src/core/nivel.js");
 const { indiceConfianza } = __req("src/core/validacion.js");
 const { accion } = __req("src/data/acciones.js");
+const { descargar } = __req("src/ui/descargas.js");
 
 function vistaPerfil(ctx) {
   const estado = ctx.almacen.get();
@@ -5915,14 +6000,15 @@ function vistaPerfil(ctx) {
     el('div', { clase: 'fila envuelve', estilo: 'gap:9px' }, [
       el('button', {
         clase: 'btn', texto: '⬇️ Exportar JSON',
-        onclick: () => {
-          const blob = new Blob([ctx.almacen.exportar()], { type: 'application/json' });
-          const a = document.createElement('a');
-          a.href = URL.createObjectURL(blob);
-          a.download = `atmosphere-${new Date().toISOString().slice(0, 10)}.json`;
-          a.click();
-          URL.revokeObjectURL(a.href);
-          toast({ titulo: 'Datos exportados', icono: '⬇️' });
+        onclick: async () => {
+          const res = await descargar({
+            nombre: `atmosphere-${new Date().toISOString().slice(0, 10)}.json`,
+            contenido: ctx.almacen.exportar(),
+            tipo: 'application/json',
+          });
+          toast(res.ok
+            ? { titulo: 'Datos exportados', texto: `${estado.registros.length} registros`, icono: '⬇️' }
+            : { titulo: 'No se pudo exportar', texto: res.motivo, tipo: 'error', icono: '⛔' });
         },
       }),
       el('button', {
@@ -5943,7 +6029,7 @@ function vistaPerfil(ctx) {
       }),
       el('button', {
         clase: 'btn', texto: '📊 Exportar CSV de registros',
-        onclick: () => {
+        onclick: async () => {
           const filas = [['fecha', 'accion', 'categoria', 'cantidad', 'unidad', 'co2e_kg', 'agua_l', 'residuo_kg', 'puntos']];
           for (const reg of estado.registros) {
             const a = accion(reg.accionId);
@@ -5951,13 +6037,14 @@ function vistaPerfil(ctx) {
               reg.impacto.co2e, reg.impacto.agua, reg.impacto.residuo, reg.puntos]);
           }
           const csv = filas.map((f) => f.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
-          const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-          const a = document.createElement('a');
-          a.href = URL.createObjectURL(blob);
-          a.download = `atmosphere-registros-${new Date().toISOString().slice(0, 10)}.csv`;
-          a.click();
-          URL.revokeObjectURL(a.href);
-          toast({ titulo: 'CSV exportado', texto: `${estado.registros.length} registros`, icono: '📊' });
+          const res = await descargar({
+            nombre: `atmosphere-registros-${new Date().toISOString().slice(0, 10)}.csv`,
+            contenido: csv,
+            tipo: 'text/csv;charset=utf-8',
+          });
+          toast(res.ok
+            ? { titulo: 'CSV exportado', texto: `${estado.registros.length} registros`, icono: '📊' }
+            : { titulo: 'No se pudo exportar', texto: res.motivo, tipo: 'error', icono: '⛔' });
         },
       }),
       el('button', {

@@ -64,8 +64,8 @@ function analizar(ruta) {
       for (const n of mExp[1].split(',').map((s) => s.trim()).filter(Boolean)) exportados.add(n);
       continue;
     }
-    if (/^export\s+(function|const|let|class)\s/.test(linea)) {
-      const nombre = linea.match(/^export\s+(?:function|const|let|class)\s+([A-Za-z0-9_$]+)/)?.[1];
+    if (/^export\s+(?:async\s+)?(?:function\*?|const|let|class)\s/.test(linea)) {
+      const nombre = linea.match(/^export\s+(?:async\s+)?(?:function\*?|const|let|class)\s+([A-Za-z0-9_$]+)/)?.[1];
       if (!nombre) throw new Error(`${clave}: no se pudo extraer el nombre exportado de: ${linea}`);
       exportados.add(nombre);
       salida.push(linea.replace(/^export\s+/, ''));
