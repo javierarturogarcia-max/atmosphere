@@ -1,0 +1,24 @@
+{
+  "name": "atmosphere",
+  "version": "1.0.0",
+  "description": "Atmosphere \u2014 plataforma gamificada de accion climatica con motor de impacto cientifico, analitica estadistica y recompensas.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "build": "node tools/build.mjs",
+    "dev": "node tools/servidor.mjs",
+    "verify": "npm test && npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "clima",
+    "sostenibilidad",
+    "gamificacion",
+    "huella-de-carbono",
+    "calidad-del-aire",
+    "pwa"
+  ]
+}
