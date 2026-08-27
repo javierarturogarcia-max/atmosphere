@@ -257,6 +257,54 @@ y la acción elegida es «bicicleta», la verificación se rechaza. Se tolera un
 15 % de diferencia, porque el GPS tiene error propio y las trazas urbanas se
 acortan bajo túneles y edificios altos.
 
+
+## 8quater. Puntos extra por prueba gráfica
+
+Adjuntar una foto no verifica nada por sí solo: cualquiera descarga una imagen.
+Lo que merece puntos extra es lo **comprobable** de esa foto, y en el navegador
+se puede comprobar bastante sin enviar nada a ningún servidor.
+
+### Qué se comprueba
+
+| Señal | Cómo | Qué demuestra |
+|---|---|---|
+| **Fecha de captura** | EXIF `DateTimeOriginal`, con la fecha del archivo como respaldo | Que la prueba es de hoy y no de hace dos años |
+| **Coordenadas** | EXIF GPS (grados, minutos, segundos + referencia N/S/E/W) | Que la foto se tomó donde dices estar (tolerancia de 50 km) |
+| **Originalidad** | Hash perceptual de 64 bits sobre una miniatura de 8×8 en gris | Que no es una foto ya usada en otro registro |
+| **Resolución** | Dimensiones del original | Una imagen de 320×240 suele ser una miniatura descargada |
+
+### Por qué un hash perceptual y no uno criptográfico
+
+Un SHA-256 cambia por completo si se recomprime la imagen o se le quita un
+píxel, así que sería trivial de burlar: basta reenviar la foto por WhatsApp para
+obtener un hash distinto. El **aHash** compara la estructura visual —qué píxeles
+superan el brillo medio en una rejilla de 8×8— y sobrevive al reescalado, al
+cambio de calidad y a variaciones de brillo. Dos imágenes se consideran la misma
+si difieren en **5 bits o menos de 64** (distancia de Hamming).
+
+En la verificación end-to-end, reenviar la misma foto dio una distancia de
+**0 bits** y la evidencia pasó de ×1,4 a ×1 con el motivo explícito en pantalla.
+
+### El multiplicador
+
+Se aplica sobre los puntos ya calculados, junto al resto de factores, y es
+**visible en la fórmula** antes de registrar. Un vídeo puntúa más que cualquier
+foto porque es mucho más costoso de falsificar: muestra la acción ocurriendo,
+no un instante que pudo capturarse en cualquier parte.
+
+Una imagen duplicada nunca penaliza por debajo de ×1. Restar puntos por
+sospecha castigaría a quien se equivoca de archivo igual que a quien hace
+trampa; basta con no premiar.
+
+### Dónde se guardan las pruebas
+
+En **IndexedDB**, no en localStorage, y como miniatura de 1.024 px al 72 % de
+calidad, no como original. Una foto de móvil pesa entre 3 y 8 MB y localStorage
+admite unos 5 MB **en total**: guardar originales reventaría la aplicación al
+tercer registro. La miniatura ronda los 120 kB y sigue siendo prueba visual
+válida. Los metadatos EXIF se leen del archivo original **antes** de reescalar,
+porque el canvas los descarta al redibujar.
+
 ## 9. Limitaciones que asumimos por escrito
 
 1. **Los factores son promedios.** Tu coche, tu red y tu supermercado concretos difieren. Las cifras son órdenes de magnitud correctos, no contabilidad.
@@ -264,4 +312,10 @@ acortan bajo túneles y edificios altos.
 3. **La acción individual es necesaria pero insuficiente.** Alrededor del 70 % de las emisiones depende de decisiones sistémicas de empresas y gobiernos. Por eso el catálogo incluye acciones comunitarias, formativas y de incidencia: son las que tienen efecto multiplicador.
 4. **Plantar árboles no compensa emitir hoy.** Un árbol tarda décadas en alcanzar su ritmo de captura y puede liberarlo entero en un incendio. El orden correcto siempre es evitar → reducir → sustituir → y solo al final compensar.
 5. **El transporte de los alimentos pesa poco** (~6 % de la huella alimentaria). Lo decisivo es *qué* comes, no de dónde viene. La app lo dice explícitamente en la acción "comprar local" para no propagar un mito cómodo.
-6. **La cohorte del ranking es sintética.** Se genera con una distribución log-normal, que es la forma real de la participación voluntaria, pero no son personas reales mientras no exista backend. La app lo declara en pantalla.
+6. **La prueba gráfica eleva la credibilidad, no la certeza.** Los metadatos
+   EXIF se pueden editar con herramientas comunes, y una foto real de un árbol
+   ajeno sigue siendo una foto real. El sistema encarece la trampa y detecta la
+   más habitual —reenviar la misma imagen—, pero no la hace imposible. Por eso
+   la evidencia alimenta un *índice de confianza* gradual en lugar de un sello
+   binario de "verificado".
+7. **La cohorte del ranking es sintética.** Se genera con una distribución log-normal, que es la forma real de la participación voluntaria, pero no son personas reales mientras no exista backend. La app lo declara en pantalla.

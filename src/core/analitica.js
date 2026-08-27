@@ -70,6 +70,10 @@ export function construirResumen(estado) {
     misionesCompletadas: (estado.misionesCompletadas || []).length,
     canjes: (estado.canjes || []).length,
     confianza: indiceConfianza(registros).valor,
+    pruebasGraficas: registros.filter((r) => r.medio).length,
+    pruebasVerificadas: registros.filter(
+      (r) => r.medio && ['fechada', 'situada', 'video'].includes(r.medio.nivel)).length,
+    pruebasVideo: registros.filter((r) => r.medio?.tipo === 'video').length,
     huellaAnual: estado.huella?.totalToneladas || 0,
     registroMadrugada,
   };

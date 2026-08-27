@@ -26,7 +26,7 @@ La mayoría de las apps de sostenibilidad fallan por una de estas tres razones:
 
 **Motor de impacto** — 51 acciones en 8 categorías (movilidad, energía, agua, residuos, alimentación, consumo, biodiversidad, comunidad), cada una con factor, unidad, línea base, dificultad, rareza, tope diario y fuente.
 
-**Sistema de juego** — XP con curva superlineal, 10 rangos, 45 insignias evaluadas por predicados puros, misiones diarias/semanales/mensuales generadas de forma determinista, rachas con congelaciones, 6 ligas, 16 recompensas canjeables.
+**Sistema de juego** — XP con curva superlineal, 10 rangos, 47 insignias evaluadas por predicados puros, misiones diarias/semanales/mensuales generadas de forma determinista, rachas con congelaciones, 6 ligas, 16 recompensas canjeables.
 
 **Analítica** — regresión OLS y Theil-Sen, test de tendencia de Mann-Kendall con corrección por empates, media móvil, EWMA, bootstrap, índices de Shannon/Pielou/Gini, perfiles circadiano y semanal, mapa de calor de constancia.
 
@@ -35,6 +35,17 @@ La mayoría de las apps de sostenibilidad fallan por una de estas tres razones:
 **Calidad del aire en tiempo real** — datos de Open-Meteo (modelos CAMS de Copernicus y GEOS-CF de la NASA) por geolocalización o búsqueda de ciudad, sin clave de API y sin servidor. AQI de la EPA (revisión 2024 de PM2,5), contraste con las guías OMS 2021, riesgo relativo de mortalidad y años de vida perdidos según el modelo log-lineal del GBD.
 
 **El juego reacciona al entorno** — cuando el aire de tu zona está mal, las acciones de movilidad y energía puntúan hasta el doble durante 3 horas, y aparece una misión contextual (*«AQI 117: deja el coche hoy»*). Es lo que separa una app de hábitos de una herramienta de salud pública.
+
+**Puntos extra por prueba gráfica** — foto o vídeo de la acción, con la cámara abriéndose directamente en el móvil. El multiplicador no depende de *adjuntar* algo, sino de lo **comprobable** de ese algo: se leen los metadatos EXIF (cuándo y dónde se tomó), se compara con tu ubicación, y un hash perceptual detecta la misma foto reenviada aunque venga reescalada o recomprimida.
+
+| Prueba | Multiplicador |
+|---|---|
+| Sin evidencia | ×1 |
+| Foto sin metadatos | ×1,10 |
+| Foto tomada hoy | ×1,25 |
+| Foto de hoy con GPS coherente | ×1,40 |
+| Vídeo del momento | ×1,45 |
+| Imagen ya usada antes | ×1 y marcada |
 
 **Verificación con el dispositivo** — GPS en vivo o importación de trazas GPX/TCX desde Strava, Garmin, Komoot o Apple Salud. La distancia la mide el aparato, no la teclea la persona: se infiere el modo de transporte del perfil de velocidad, se descartan los saltos de GPS y se comprueba que la traza respalde la acción declarada.
 
@@ -46,7 +57,7 @@ La mayoría de las apps de sostenibilidad fallan por una de estas tres razones:
 
 ```bash
 npm run dev      # servidor local en http://localhost:4173
-npm test         # 112 pruebas del motor
+npm test         # 134 pruebas del motor
 npm run build    # genera dist/atmosphere.html (un solo archivo, sin dependencias)
 npm run verify   # pruebas + build
 ```
@@ -82,6 +93,7 @@ src/
 │   ├── openmeteo.js      Fuente de datos reales de calidad del aire
 │   ├── gps.js            Trazas, inferencia de modo y verificación
 │   ├── gpx.js            Lectura de archivos GPX y TCX
+│   ├── evidencia.js      EXIF, hash perceptual y credibilidad de pruebas
 │   ├── ranking.js        Ligas y cohorte log-normal
 │   ├── rng.js            Aleatoriedad determinista (mulberry32)
 │   └── estado.js         Almacén, persistencia y transacciones
@@ -89,6 +101,7 @@ src/
 └── ui/            Interfaz (sin dependencias, gráficos SVG a mano)
     ├── app.js            Navegación y enrutado
     ├── componentes.js    Primitivas y gráficos
+    ├── medios.js         Cámara, miniaturas e IndexedDB
     └── vistas/           11 vistas
 ```
 
@@ -119,7 +132,7 @@ subcarpeta de proyecto.
 
 ### GitHub Pages (configurado en este repositorio)
 
-El flujo de trabajo `.github/workflows/pages.yml` ejecuta las 112 pruebas,
+El flujo de trabajo `.github/workflows/pages.yml` ejecuta las 134 pruebas,
 comprueba que `dist/` no esté desfasado respecto a `src/` y publica. Para
 activarlo una sola vez:
 

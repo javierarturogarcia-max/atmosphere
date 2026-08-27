@@ -7,6 +7,8 @@ import { validarRegistro, NIVELES } from '../../core/validacion.js';
 import { claveDia } from '../../core/rachas.js';
 import { iniciarSeguimiento, analizarTraza, verificarContra } from '../../core/gps.js';
 import { parsearTraza, metadatosTraza } from '../../core/gpx.js';
+import { procesarMedio, selectorMedio, guardarMedio, LIMITE_ARCHIVO_MB } from '../medios.js';
+import { evaluarEvidencia, NIVELES_EVIDENCIA } from '../../core/evidencia.js';
 
 let filtroCat = 'todas';
 let busqueda = '';
@@ -122,6 +124,10 @@ function abrirFormulario(a, ctx) {
   const evidencia = el('input', { type: 'checkbox' });
   const previa = el('div', { clase: 'tarjeta', estilo: 'margin:15px 0' });
 
+  // Se declara aqui, antes de 'actualizar', porque esa funcion lee 'medio' para
+  // mostrar el multiplicador por evidencia y se invoca nada mas definirse.
+  let medio = null;
+
   const actualizar = (valor) => {
     const q = Math.max(0, Number(valor) || 0);
     const imp = calcularImpacto(a.id, q, { pais: estado.perfil.pais });
@@ -137,7 +143,8 @@ function abrirFormulario(a, ctx) {
       <div class="divisor"></div>
       <div class="mini"><strong>Linea base:</strong> ${esc(a.base)}</div>
       <div class="mini" style="margin-top:5px"><strong>Formula:</strong> ${desglose.porCO2e} (CO2e) + ${desglose.porAgua} (agua) + ${desglose.porResiduo} (residuo)
-        × dificultad ${desglose.factores.dificultad} × rareza ${desglose.factores.rareza}</div>
+        × dificultad ${desglose.factores.dificultad} × rareza ${desglose.factores.rareza}${
+          medio ? ` × evidencia ${evaluarEvidencia({ tipo: medio.tipo, exif: medio.exif, fechaArchivo: medio.fechaArchivo, hash: medio.hash, hashesPrevios: estado.medios || [], ancho: medio.ancho, alto: medio.alto }).factor}` : ''}</div>
       ${val.mensajes.length ? `<div class="aviso ${val.nivel === 'bloqueo' ? 'error' : 'alerta'}" style="margin-top:11px">
         <span>${val.nivel === 'bloqueo' ? '⛔' : '⚠️'}</span><div>${val.mensajes.map(esc).join('<br>')}</div></div>` : ''}`;
   };
@@ -157,6 +164,11 @@ function abrirFormulario(a, ctx) {
   };
   const bloqueGPS = a.cat === 'movilidad' && a.unidad === 'km'
     ? construirVerificacion(a, aplicarMedida)
+    : null;
+
+  // Prueba grafica: solo para acciones que se pueden fotografiar de verdad.
+  const bloqueMedios = a.evidencia !== 'ninguna'
+    ? construirMedios(a, estado, (m) => { medio = m; actualizar(campo.value); })
     : null;
 
   const contenido = el('div', {}, [
@@ -181,19 +193,33 @@ function abrirFormulario(a, ctx) {
             [evidencia, `Tengo evidencia (${a.evidencia}) — sube el indice de confianza`])
           : null,
         bloqueGPS,
+        bloqueMedios,
         previa,
         el('button', {
           clase: 'btn primario bloque',
           texto: 'Registrar',
-          onclick: () => {
+          onclick: async () => {
             const res = ctx.almacen.registrar(a.id, Number(campo.value), {
               nota: [nota.value, prueba?.resumen].filter(Boolean).join(' · '),
               evidencia: prueba ? 'gps' : (evidencia.checked ? a.evidencia : null),
               prueba: prueba || null,
+              medio,
             });
             if (!res.ok) {
               toast({ titulo: 'No se pudo registrar', texto: res.mensajes.join(' '), tipo: 'error', icono: '⛔' });
               return;
+            }
+            // El binario solo se guarda si el registro salio adelante, para no
+            // dejar archivos huerfanos ocupando espacio.
+            if (medio?.blob && medio.id) {
+              try {
+                await guardarMedio({
+                  id: medio.id, registroId: res.registro.id, blob: medio.blob,
+                  tipo: medio.tipo, portada: medio.portada || null, fecha: new Date().toISOString(),
+                });
+              } catch (e) {
+                toast({ titulo: 'La prueba no se pudo guardar', texto: 'El registro si se guardo.', tipo: 'error', icono: '⚠️' });
+              }
             }
             cerrar();
             celebrar(res, a);
@@ -352,4 +378,94 @@ function construirVerificacion(a, aplicarMedida) {
 
   pintar();
   return salida;
+}
+
+
+/**
+ * Bloque de prueba grafica.
+ *
+ * Que la persona adjunte una foto no verifica nada por si solo: cualquiera
+ * descarga una imagen. Lo que suma puntos es lo COMPROBABLE de esa foto —que
+ * se tomo hoy, cerca de ti, y que no se ha usado antes—, y eso se evalua aqui
+ * mismo, en el navegador, mostrando el razonamiento completo.
+ */
+function construirMedios(a, estado, alAdjuntar) {
+  const caja = el('div', { clase: 'tarjeta', estilo: 'margin-top:13px' });
+  let actual = null;
+
+  const pintar = (error = null, cargando = false) => {
+    caja.innerHTML = '';
+    caja.appendChild(el('div', { clase: 'fila entre', estilo: 'margin-bottom:9px' }, [
+      el('span', { clase: 'etiqueta', texto: 'Prueba con foto o video' }),
+      actual ? el('button', {
+        clase: 'btn s', texto: 'Quitar',
+        onclick: () => { if (actual?.url) URL.revokeObjectURL(actual.url); actual = null; alAdjuntar(null); pintar(); },
+      }) : null,
+    ]));
+
+    if (cargando) {
+      caja.appendChild(el('div', { clase: 'aviso info pulso' }, ['⏳ Procesando la prueba...']));
+      return;
+    }
+    if (error) {
+      caja.appendChild(el('div', { clase: 'aviso error', estilo: 'margin-bottom:11px' }, ['⚠️ ' + error]));
+    }
+
+    if (actual) {
+      const ev = evaluarEvidencia({
+        tipo: actual.tipo, exif: actual.exif, fechaArchivo: actual.fechaArchivo,
+        hash: actual.hash, hashesPrevios: estado.medios || [],
+        ancho: actual.ancho, alto: actual.alto, bytes: actual.bytes,
+      });
+      const meta = NIVELES_EVIDENCIA[ev.nivel];
+
+      caja.appendChild(el('div', { clase: 'fila', estilo: 'gap:13px;align-items:flex-start;margin-bottom:11px' }, [
+        actual.tipo === 'video'
+          ? el('video', { src: actual.url, controls: 'true', playsinline: 'true', muted: 'true',
+              estilo: 'width:150px;border-radius:9px;background:#000' })
+          : el('img', { src: actual.url, alt: 'Prueba adjunta',
+              estilo: 'width:150px;border-radius:9px;object-fit:cover' }),
+        el('div', { clase: 'crece' }, [
+          el('div', { clase: 'pastilla', estilo: `background:${meta.color}22;color:${meta.color};margin-bottom:7px`,
+            texto: `${meta.etiqueta} · ×${ev.factor}` }),
+          el('ul', { estilo: 'margin:0 0 0 17px;padding:0;font-size:11.5px;color:var(--texto-2);line-height:1.6' },
+            ev.motivos.map((m) => el('li', { texto: m }))),
+          actual.tipo === 'video' && actual.duracion
+            ? el('div', { clase: 'mini', estilo: 'margin-top:5px', texto: `${actual.duracion} s de video` })
+            : null,
+        ]),
+      ]));
+    }
+
+    const input = selectorMedio(async (file) => {
+      pintar(null, true);
+      try {
+        const m = await procesarMedio(file);
+        m.id = `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+        if (actual?.url) URL.revokeObjectURL(actual.url);
+        actual = m;
+        alAdjuntar(m);
+        pintar();
+      } catch (e) {
+        actual = null;
+        alAdjuntar(null);
+        pintar(e.message || 'No se pudo procesar el archivo.');
+      }
+    });
+
+    caja.appendChild(el('div', { clase: 'fila envuelve', estilo: 'gap:7px' }, [
+      el('button', {
+        clase: `btn s${actual ? '' : ' primario'}`,
+        texto: actual ? '🔄 Cambiar prueba' : '📷 Hacer foto o video',
+        onclick: () => input.click(),
+      }),
+      input,
+    ]));
+
+    caja.appendChild(el('div', { clase: 'mini', estilo: 'margin-top:9px' },
+      [`En el movil se abre la camara directamente. Se guarda una miniatura, no el original, para no llenar el almacenamiento (limite ${LIMITE_ARCHIVO_MB} MB por archivo). Nada se envia a ningun servidor.`]));
+  };
+
+  pintar();
+  return caja;
 }

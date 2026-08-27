@@ -221,6 +221,16 @@ export const LOGROS = Object.freeze([
     condicion: (r) => n(r.huellaAnual) > 0 && n(r.huellaAnual) <= 2.3,
     progreso: (r) => [n(r.huellaAnual) > 0 ? Math.max(0, 100 - (n(r.huellaAnual) - 2.3) * 20) : 0, 100] },
 
+  { id: 'fotoperiodista', titulo: 'Fotoperiodista', icono: '📷', nivel: 'plata',
+    desc: 'Aporta 10 pruebas graficas fechadas de tus acciones.',
+    condicion: (r) => n(r.pruebasVerificadas) >= 10,
+    progreso: (r) => [n(r.pruebasVerificadas), 10] },
+
+  { id: 'documentalista', titulo: 'Documentalista', icono: '🎥', nivel: 'oro',
+    desc: 'Graba 5 videos verificados: son la prueba mas dificil de falsificar.',
+    condicion: (r) => n(r.pruebasVideo) >= 5,
+    progreso: (r) => [n(r.pruebasVideo), 5] },
+
   { id: 'auditor', titulo: 'Auditor riguroso', icono: '🧾', nivel: 'plata',
     desc: 'Manten un indice de confianza superior a 0,8 con 50+ registros.',
     condicion: (r) => n(r.confianza) >= 0.8 && n(r.registros) >= 50,

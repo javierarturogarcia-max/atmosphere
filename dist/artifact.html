@@ -2535,6 +2535,10 @@ function construirResumen(estado) {
     misionesCompletadas: (estado.misionesCompletadas || []).length,
     canjes: (estado.canjes || []).length,
     confianza: indiceConfianza(registros).valor,
+    pruebasGraficas: registros.filter((r) => r.medio).length,
+    pruebasVerificadas: registros.filter(
+      (r) => r.medio && ['fechada', 'situada', 'video'].includes(r.medio.nivel)).length,
+    pruebasVideo: registros.filter((r) => r.medio?.tipo === 'video').length,
     huellaAnual: estado.huella?.totalToneladas || 0,
     registroMadrugada,
   };
@@ -2942,6 +2946,16 @@ const LOGROS = Object.freeze([
     condicion: (r) => n(r.huellaAnual) > 0 && n(r.huellaAnual) <= 2.3,
     progreso: (r) => [n(r.huellaAnual) > 0 ? Math.max(0, 100 - (n(r.huellaAnual) - 2.3) * 20) : 0, 100] },
 
+  { id: 'fotoperiodista', titulo: 'Fotoperiodista', icono: '📷', nivel: 'plata',
+    desc: 'Aporta 10 pruebas graficas fechadas de tus acciones.',
+    condicion: (r) => n(r.pruebasVerificadas) >= 10,
+    progreso: (r) => [n(r.pruebasVerificadas), 10] },
+
+  { id: 'documentalista', titulo: 'Documentalista', icono: '🎥', nivel: 'oro',
+    desc: 'Graba 5 videos verificados: son la prueba mas dificil de falsificar.',
+    condicion: (r) => n(r.pruebasVideo) >= 5,
+    progreso: (r) => [n(r.pruebasVideo), 5] },
+
   { id: 'auditor', titulo: 'Auditor riguroso', icono: '🧾', nivel: 'plata',
     desc: 'Manten un indice de confianza superior a 0,8 con 50+ registros.',
     condicion: (r) => n(r.confianza) >= 0.8 && n(r.registros) >= 50,
@@ -3036,6 +3050,354 @@ function safe(fn, porDefecto) {
   __exp.resumenPorNivel = resumenPorNivel;
   __exp.completitud = completitud;
   __exp.logro = logro;
+});
+
+__def("src/core/evidencia.js", function (__exp, __req) {
+/**
+ * evidencia.js — Credibilidad de las pruebas graficas.
+ *
+ * Aceptar una foto sin mas no verifica nada: cualquiera descarga una imagen de
+ * internet. Lo que hace creible una prueba es lo que se puede COMPROBAR sobre
+ * ella, y en el navegador se puede comprobar bastante:
+ *
+ *   1. Metadatos EXIF: cuando y donde se tomo realmente la foto.
+ *   2. Frescura: una foto de hace dos anos no prueba lo que hiciste hoy.
+ *   3. Coherencia geografica: si la foto se tomo a 800 km de ti, algo falla.
+ *   4. Duplicados: la trampa mas comun es reenviar la misma foto una y otra vez.
+ *      Se detecta con un hash perceptual, que sobrevive al reescalado y a la
+ *      recompresion, cosas que un hash criptografico no toleraria.
+ *
+ * Todo el modulo es puro y sin DOM: recibe datos ya extraidos y decide. Asi es
+ * testeable y la parte de navegador (canvas, camara) queda aislada en ui/medios.js.
+ */
+
+/** Tipos de medio admitidos y su credibilidad base. */
+const TIPOS = Object.freeze({
+  foto: { etiqueta: 'Foto', icono: '📷', base: 1.10 },
+  video: { etiqueta: 'Video', icono: '🎥', base: 1.25 },
+});
+
+/** Multiplicadores maximos por calidad de la prueba. */
+const NIVELES_EVIDENCIA = Object.freeze({
+  ninguna:     { factor: 1.00, etiqueta: 'Sin evidencia',              color: '#94a3b8' },
+  debil:       { factor: 1.10, etiqueta: 'Evidencia sin metadatos',    color: '#94a3b8' },
+  fechada:     { factor: 1.25, etiqueta: 'Evidencia fechada',          color: '#38bdf8' },
+  situada:     { factor: 1.40, etiqueta: 'Evidencia fechada y situada', color: '#34d399' },
+  video:       { factor: 1.45, etiqueta: 'Video verificado',           color: '#c084fc' },
+  sospechosa:  { factor: 1.00, etiqueta: 'Evidencia no valida',        color: '#f87171' },
+});
+
+/** Antiguedad maxima de una prueba para considerarla del momento: 24 h. */
+const FRESCURA_MS = 24 * 60 * 60 * 1000;
+
+/** Distancia maxima entre la foto y la persona para considerarla coherente: 50 km. */
+const RADIO_COHERENTE_KM = 50;
+
+/** Distancia de Hamming entre dos hashes hexadecimales de igual longitud. */
+function distanciaHamming(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return Infinity;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) {
+    let x = parseInt(a[i], 16) ^ parseInt(b[i], 16);
+    while (x) { d += x & 1; x >>= 1; }
+  }
+  return d;
+}
+
+/**
+ * Hash perceptual medio (aHash) de una miniatura de 8x8 en escala de grises.
+ * Cada bit dice si el pixel supera la media. Sobrevive a reescalados y cambios
+ * de calidad, que es justo lo que hace falta para pillar una foto reenviada.
+ * @param {number[]|Uint8ClampedArray} grises 64 valores de 0 a 255
+ */
+function hashPercepcion(grises) {
+  const v = Array.from(grises || []);
+  if (v.length !== 64) return null;
+  const media = v.reduce((s, x) => s + x, 0) / 64;
+  let hex = '';
+  for (let i = 0; i < 64; i += 4) {
+    let nibble = 0;
+    for (let j = 0; j < 4; j++) if (v[i + j] > media) nibble |= 1 << (3 - j);
+    hex += nibble.toString(16);
+  }
+  return hex;
+}
+
+/** Dos imagenes se consideran la misma si difieren en 5 bits o menos de 64. */
+const UMBRAL_DUPLICADO = 5;
+
+/** Busca un duplicado perceptual entre hashes ya registrados. */
+function buscarDuplicado(hash, previos = []) {
+  if (!hash) return null;
+  for (const p of previos) {
+    const h = typeof p === 'string' ? p : p?.hash;
+    if (!h) continue;
+    const d = distanciaHamming(hash, h);
+    if (d <= UMBRAL_DUPLICADO) return { hash: h, distancia: d, registroId: p?.registroId ?? null };
+  }
+  return null;
+}
+
+/** Distancia aproximada en km entre dos coordenadas (haversine). */
+function kmEntre(lat1, lon1, lat2, lon2) {
+  const R = 6371.0088, rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad, dLon = (lon2 - lon1) * rad;
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+
+/**
+ * Evalua una prueba y devuelve el multiplicador que merece.
+ *
+ * @param {object} p
+ * @param {'foto'|'video'} p.tipo
+ * @param {{fecha?:number, lat?:number, lon?:number, marca?:string}} [p.exif]
+ * @param {number} [p.fechaArchivo] marca de tiempo del archivo (respaldo del EXIF)
+ * @param {string} [p.hash] hash perceptual (solo fotos)
+ * @param {Array} [p.hashesPrevios] hashes ya usados por este perfil
+ * @param {number} [p.ahora] momento del registro
+ * @param {{lat:number, lon:number}} [p.ubicacion] posicion declarada del usuario
+ * @param {number} [p.bytes] tamano del archivo
+ * @param {number} [p.ancho]
+ * @param {number} [p.alto]
+ */
+function evaluarEvidencia(p = {}) {
+  const motivos = [];
+  const ahora = p.ahora ?? Date.now();
+  const tipo = TIPOS[p.tipo] ? p.tipo : null;
+
+  if (!tipo) {
+    return { nivel: 'ninguna', ...NIVELES_EVIDENCIA.ninguna, motivos: ['No se adjunto ninguna prueba.'], sospecha: 0, duplicado: null };
+  }
+
+  // --- Duplicado: descalifica antes que nada -------------------------------
+  const duplicado = buscarDuplicado(p.hash, p.hashesPrevios);
+  if (duplicado) {
+    return {
+      nivel: 'sospechosa', ...NIVELES_EVIDENCIA.sospechosa, duplicado, sospecha: 0.95,
+      motivos: [`Esta imagen ya se uso en otro registro (diferencia de ${duplicado.distancia} bits de 64). No suma puntos extra.`],
+    };
+  }
+
+  // --- Imagen demasiado pequena: probable miniatura descargada -------------
+  if (p.tipo === 'foto' && Number.isFinite(p.ancho) && Number.isFinite(p.alto)
+      && p.ancho > 0 && p.alto > 0 && p.ancho * p.alto < 160000) {
+    motivos.push(`Resolucion baja (${p.ancho}x${p.alto}): las camaras actuales producen imagenes mucho mayores.`);
+  }
+
+  // --- Fecha: EXIF primero, marca del archivo como respaldo ---------------
+  const fechaExif = Number.isFinite(p.exif?.fecha) ? p.exif.fecha : null;
+  const fechaArchivo = Number.isFinite(p.fechaArchivo) ? p.fechaArchivo : null;
+  const fecha = fechaExif ?? fechaArchivo;
+  let fechada = false;
+
+  if (fecha === null) {
+    motivos.push('El archivo no conserva fecha de captura. Muchas apps de mensajeria la eliminan al reenviar.');
+  } else {
+    const edad = ahora - fecha;
+    if (edad < -60 * 60 * 1000) {
+      motivos.push('La fecha del archivo esta en el futuro.');
+    } else if (edad > FRESCURA_MS) {
+      const dias = Math.round(edad / 86400000);
+      motivos.push(`La prueba es de hace ${dias} dia${dias === 1 ? '' : 's'}: no acredita una accion de hoy.`);
+    } else {
+      fechada = true;
+      motivos.push(fechaExif !== null
+        ? 'Tomada hoy segun los metadatos de la camara.'
+        : 'Archivo creado hoy (sin metadatos de camara, se usa la fecha del archivo).');
+    }
+  }
+
+  // --- Ubicacion: solo cuenta si viene del EXIF ---------------------------
+  let situada = false;
+  if (Number.isFinite(p.exif?.lat) && Number.isFinite(p.exif?.lon)) {
+    if (Number.isFinite(p.ubicacion?.lat) && Number.isFinite(p.ubicacion?.lon)) {
+      const d = kmEntre(p.exif.lat, p.exif.lon, p.ubicacion.lat, p.ubicacion.lon);
+      if (d <= RADIO_COHERENTE_KM) {
+        situada = true;
+        motivos.push(`Coordenadas coherentes con tu ubicacion (${d.toFixed(1)} km de distancia).`);
+      } else {
+        motivos.push(`La foto se tomo a ${Math.round(d)} km de tu ubicacion declarada.`);
+      }
+    } else {
+      situada = true;
+      motivos.push('La foto conserva coordenadas GPS.');
+    }
+  }
+
+  // --- Nivel resultante ----------------------------------------------------
+  let nivel;
+  if (p.tipo === 'video') {
+    nivel = fechada ? 'video' : 'debil';
+    if (fechada) motivos.push('Un video del momento es mucho mas costoso de falsificar que una foto.');
+  } else if (fechada && situada) {
+    nivel = 'situada';
+  } else if (fechada) {
+    nivel = 'fechada';
+  } else {
+    nivel = 'debil';
+  }
+
+  return {
+    nivel, ...NIVELES_EVIDENCIA[nivel], motivos, duplicado: null,
+    sospecha: nivel === 'debil' ? 0.15 : 0,
+    detalle: { fechada, situada, tieneExif: fechaExif !== null, tipo: p.tipo },
+  };
+}
+
+// ============================================================== lectura de EXIF
+
+/** Etiquetas EXIF que interesan. */
+const TAG = {
+  MARCA: 0x010f, MODELO: 0x0110, ORIENTACION: 0x0112,
+  PTR_EXIF: 0x8769, PTR_GPS: 0x8825,
+  FECHA_ORIGINAL: 0x9003, FECHA_DIGITAL: 0x9004, FECHA: 0x0132,
+  ANCHO: 0xa002, ALTO: 0xa003,
+  GPS_LAT_REF: 0x0001, GPS_LAT: 0x0002, GPS_LON_REF: 0x0003, GPS_LON: 0x0004,
+};
+
+/** Bytes por componente segun el tipo EXIF. */
+const TAM_TIPO = { 1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 6: 1, 7: 1, 8: 2, 9: 4, 10: 8, 11: 4, 12: 8 };
+
+/**
+ * Extrae los metadatos EXIF de un JPEG.
+ * Implementado a mano para no arrastrar dependencias: son unas pocas decenas de
+ * lineas y el formato lleva estable desde 1998.
+ * @param {ArrayBuffer|Uint8Array} datos
+ * @returns {{fecha:number|null, lat:number|null, lon:number|null, marca:string|null,
+ *            modelo:string|null, ancho:number|null, alto:number|null}|null}
+ */
+function leerEXIF(datos) {
+  const bytes = datos instanceof Uint8Array ? datos : new Uint8Array(datos || []);
+  const vacio = { fecha: null, lat: null, lon: null, marca: null, modelo: null, ancho: null, alto: null };
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null; // no es JPEG
+
+  // Recorre los segmentos hasta encontrar APP1 con cabecera "Exif\0\0".
+  let i = 2;
+  let inicioTIFF = -1;
+  while (i + 4 < bytes.length) {
+    if (bytes[i] !== 0xff) { i++; continue; }
+    const marcador = bytes[i + 1];
+    if (marcador === 0xd8 || marcador === 0x01 || (marcador >= 0xd0 && marcador <= 0xd7)) { i += 2; continue; }
+    if (marcador === 0xda || marcador === 0xd9) break; // inicio de imagen: ya no hay metadatos
+    const largo = (bytes[i + 2] << 8) | bytes[i + 3];
+    if (largo < 2) break;
+    if (marcador === 0xe1 && i + 10 < bytes.length
+        && bytes[i + 4] === 0x45 && bytes[i + 5] === 0x78 && bytes[i + 6] === 0x69 && bytes[i + 7] === 0x66) {
+      inicioTIFF = i + 10;
+      break;
+    }
+    i += 2 + largo;
+  }
+  if (inicioTIFF < 0 || inicioTIFF + 8 > bytes.length) return vacio;
+
+  const vista = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const orden = String.fromCharCode(bytes[inicioTIFF], bytes[inicioTIFF + 1]);
+  if (orden !== 'II' && orden !== 'MM') return vacio;
+  const le = orden === 'II';
+  const u16 = (o) => vista.getUint16(o, le);
+  const u32 = (o) => vista.getUint32(o, le);
+
+  if (u16(inicioTIFF + 2) !== 0x002a) return vacio;
+  const offsetIFD0 = u32(inicioTIFF + 4);
+
+  const salida = { ...vacio };
+  const punteros = {};
+
+  const leerValor = (offEntrada) => {
+    const tipo = u16(offEntrada + 2);
+    const cuenta = u32(offEntrada + 4);
+    const tam = (TAM_TIPO[tipo] || 1) * cuenta;
+    const off = tam > 4 ? inicioTIFF + u32(offEntrada + 8) : offEntrada + 8;
+    if (off < 0 || off + tam > bytes.length) return null;
+
+    if (tipo === 2) { // ASCII
+      let s = '';
+      for (let k = 0; k < cuenta; k++) {
+        const c = bytes[off + k];
+        if (c === 0) break;
+        s += String.fromCharCode(c);
+      }
+      return s.trim();
+    }
+    if (tipo === 3) return cuenta === 1 ? u16(off) : Array.from({ length: cuenta }, (_, k) => u16(off + k * 2));
+    if (tipo === 4) return cuenta === 1 ? u32(off) : Array.from({ length: cuenta }, (_, k) => u32(off + k * 4));
+    if (tipo === 5) { // RATIONAL
+      const r = Array.from({ length: cuenta }, (_, k) => {
+        const num = u32(off + k * 8), den = u32(off + k * 8 + 4);
+        return den === 0 ? 0 : num / den;
+      });
+      return cuenta === 1 ? r[0] : r;
+    }
+    return null;
+  };
+
+  const recorrerIFD = (offIFD, destino) => {
+    const base = inicioTIFF + offIFD;
+    if (base + 2 > bytes.length) return;
+    const n = u16(base);
+    if (n > 512) return; // proteccion frente a archivos corruptos
+    for (let e = 0; e < n; e++) {
+      const off = base + 2 + e * 12;
+      if (off + 12 > bytes.length) return;
+      destino[u16(off)] = leerValor(off);
+    }
+  };
+
+  const ifd0 = {};
+  recorrerIFD(offsetIFD0, ifd0);
+  salida.marca = typeof ifd0[TAG.MARCA] === 'string' ? ifd0[TAG.MARCA] : null;
+  salida.modelo = typeof ifd0[TAG.MODELO] === 'string' ? ifd0[TAG.MODELO] : null;
+  punteros.exif = ifd0[TAG.PTR_EXIF];
+  punteros.gps = ifd0[TAG.PTR_GPS];
+
+  const exif = {};
+  if (Number.isFinite(punteros.exif)) recorrerIFD(punteros.exif, exif);
+  const cadenaFecha = exif[TAG.FECHA_ORIGINAL] || exif[TAG.FECHA_DIGITAL] || ifd0[TAG.FECHA];
+  salida.fecha = parsearFechaEXIF(cadenaFecha);
+  salida.ancho = Number.isFinite(exif[TAG.ANCHO]) ? exif[TAG.ANCHO] : null;
+  salida.alto = Number.isFinite(exif[TAG.ALTO]) ? exif[TAG.ALTO] : null;
+
+  const gps = {};
+  if (Number.isFinite(punteros.gps)) recorrerIFD(punteros.gps, gps);
+  salida.lat = gradosDesdeGPS(gps[TAG.GPS_LAT], gps[TAG.GPS_LAT_REF], 'S');
+  salida.lon = gradosDesdeGPS(gps[TAG.GPS_LON], gps[TAG.GPS_LON_REF], 'W');
+
+  return salida;
+}
+
+/** "2026:08:27 14:30:00" -> milisegundos. El EXIF usa dos puntos en la fecha. */
+function parsearFechaEXIF(cadena) {
+  if (typeof cadena !== 'string') return null;
+  const m = cadena.match(/^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+  if (!m) return null;
+  const t = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
+  return Number.isFinite(t) ? t : null;
+}
+
+/** Convierte [grados, minutos, segundos] + referencia a grados decimales. */
+function gradosDesdeGPS(dms, ref, negativo) {
+  if (!Array.isArray(dms) || dms.length < 3) return null;
+  const [g, m, s] = dms.map(Number);
+  if (![g, m, s].every(Number.isFinite)) return null;
+  const grados = g + m / 60 + s / 3600;
+  if (!Number.isFinite(grados) || Math.abs(grados) > 180) return null;
+  return String(ref).toUpperCase().startsWith(negativo) ? -grados : grados;
+}
+
+  __exp.TIPOS = TIPOS;
+  __exp.NIVELES_EVIDENCIA = NIVELES_EVIDENCIA;
+  __exp.FRESCURA_MS = FRESCURA_MS;
+  __exp.RADIO_COHERENTE_KM = RADIO_COHERENTE_KM;
+  __exp.distanciaHamming = distanciaHamming;
+  __exp.hashPercepcion = hashPercepcion;
+  __exp.UMBRAL_DUPLICADO = UMBRAL_DUPLICADO;
+  __exp.buscarDuplicado = buscarDuplicado;
+  __exp.evaluarEvidencia = evaluarEvidencia;
+  __exp.leerEXIF = leerEXIF;
+  __exp.parsearFechaEXIF = parsearFechaEXIF;
+  __exp.gradosDesdeGPS = gradosDesdeGPS;
 });
 
 __def("src/core/rng.js", function (__exp, __req) {
@@ -3465,6 +3827,7 @@ const { claveDia, calcularRacha, congelacionesGanadas } = __req("src/core/rachas
 const { detectarAscenso, nivelDesdeXP } = __req("src/core/nivel.js");
 const { construirResumen } = __req("src/core/analitica.js");
 const { evaluarLogros } = __req("src/core/logros.js");
+const { evaluarEvidencia } = __req("src/core/evidencia.js");
 const { misionesVigentes, evaluarMision, misionesPorAire } = __req("src/core/misiones.js");
 
 const VERSION_ESTADO = 1;
@@ -3504,6 +3867,7 @@ function estadoInicial(nombre = 'Guardian', paisCod = 'WW') {
     logros: [],
     misionesCompletadas: [],
     canjes: [],
+    medios: [],
     huella: null,
     huellaEntradas: null,
     aire: { ultimaLectura: null, historial: [] },
@@ -3627,6 +3991,23 @@ function crearAlmacen(inicial = null) {
       const bonus = bonusDiversidad(catsHoy.size);
       const aire = factorAire(lecturaAire?.aqi, a.cat);
 
+      // Prueba grafica: se evalua su credibilidad, no su mera existencia.
+      const medio = opciones.medio || null;
+      const evidenciaGrafica = medio
+        ? evaluarEvidencia({
+          tipo: medio.tipo,
+          exif: medio.exif,
+          fechaArchivo: medio.fechaArchivo,
+          hash: medio.hash,
+          hashesPrevios: estado.medios || [],
+          ahora: fecha.getTime(),
+          ubicacion: opciones.ubicacion || null,
+          bytes: medio.bytes,
+          ancho: medio.ancho,
+          alto: medio.alto,
+        })
+        : evaluarEvidencia({});
+
       const { puntos, desglose } = calcularPuntos({
         accionId,
         impacto,
@@ -3634,7 +4015,7 @@ function crearAlmacen(inicial = null) {
         acumuladoCategoriaHoy: acumuladoCat,
         acumuladoDiaHoy: acumuladoDia,
         contribuyeMision: contribuye,
-        factorEvento: multActivo * bonus.factor * aire.factor,
+        factorEvento: multActivo * bonus.factor * aire.factor * evidenciaGrafica.factor,
       });
 
       const registro = {
@@ -3646,13 +4027,28 @@ function crearAlmacen(inicial = null) {
         impacto: { co2e: impacto.co2e, agua: impacto.agua, residuo: impacto.residuo, kwh: impacto.kwh },
         puntos,
         desglose,
-        evidencia: opciones.evidencia || null,
+        evidencia: opciones.evidencia || (medio ? medio.tipo : null),
         nota: opciones.nota || '',
-        sospecha: val.sospecha,
+        sospecha: Math.max(val.sospecha, evidenciaGrafica.sospecha || 0),
+        medio: medio
+          ? {
+            id: medio.id || null,
+            tipo: medio.tipo,
+            hash: medio.hash || null,
+            nivel: evidenciaGrafica.nivel,
+            factor: evidenciaGrafica.factor,
+            duracion: medio.duracion ?? null,
+          }
+          : null,
       };
 
       const xpAntes = estado.perfil.xp;
       estado.registros.push(registro);
+      // El hash se guarda aparte para que la deteccion de duplicados siga
+      // funcionando aunque el registro se elimine mas adelante.
+      if (medio?.hash && !evidenciaGrafica.duplicado) {
+        estado.medios = [...(estado.medios || []), { hash: medio.hash, registroId: registro.id, id: medio.id || null }];
+      }
       estado.perfil.puntos += puntos;
       estado.perfil.puntosHistoricos += puntos;
       estado.perfil.xp += Math.round(puntos * 0.7);
@@ -3702,6 +4098,7 @@ function crearAlmacen(inicial = null) {
         congelacionesGanadas: ganadas,
         bonusDiversidad: bonus,
         bonusAire: aire,
+        evidencia: evidenciaGrafica,
         racha: nuevaRacha,
       };
     },
@@ -3802,6 +4199,268 @@ function crearAlmacen(inicial = null) {
   __exp.cargar = cargar;
   __exp.guardar = guardar;
   __exp.crearAlmacen = crearAlmacen;
+});
+
+__def("src/ui/medios.js", function (__exp, __req) {
+/**
+ * medios.js — Captura y almacenamiento de fotos y videos de prueba.
+ *
+ * Dos decisiones de almacenamiento que importan:
+ *
+ * 1. NO se guarda el archivo original de las fotos, sino una miniatura de
+ *    1024 px al 72 % de calidad. Una foto de movil pesa entre 3 y 8 MB y
+ *    localStorage tiene un limite de unos 5 MB EN TOTAL: guardar originales
+ *    reventaria la aplicacion al tercer registro. La miniatura ronda los
+ *    120 kB y sigue siendo prueba visual perfectamente valida.
+ *
+ * 2. Los binarios van a IndexedDB, no a localStorage. localStorage es
+ *    sincrono, solo admite texto y tiene un limite minusculo; IndexedDB
+ *    guarda Blobs y dispone de mucho mas espacio. En el estado del perfil
+ *    solo queda el identificador.
+ *
+ * Los metadatos EXIF se leen del archivo ORIGINAL antes de reescalarlo, porque
+ * el canvas los descarta al redibujar.
+ */
+const { leerEXIF, hashPercepcion } = __req("src/core/evidencia.js");
+
+const BD = 'atmosphere-medios';
+const ALMACEN = 'medios';
+const VERSION = 1;
+
+/** Limites: por archivo y para el conjunto del perfil. */
+const LIMITE_ARCHIVO_MB = 25;
+const PRESUPUESTO_TOTAL_MB = 150;
+const ANCHO_MINIATURA = 1024;
+
+let promesaBD = null;
+
+function abrirBD() {
+  if (promesaBD) return promesaBD;
+  promesaBD = new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') { reject(new Error('Este navegador no admite IndexedDB.')); return; }
+    const req = indexedDB.open(BD, VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(ALMACEN)) db.createObjectStore(ALMACEN, { keyPath: 'id' });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error('No se pudo abrir el almacen de medios.'));
+  });
+  return promesaBD;
+}
+
+function transaccion(modo, fn) {
+  return abrirBD().then((db) => new Promise((resolve, reject) => {
+    const tx = db.transaction(ALMACEN, modo);
+    const store = tx.objectStore(ALMACEN);
+    let resultado;
+    try { resultado = fn(store); } catch (e) { reject(e); return; }
+    tx.oncomplete = () => resolve(resultado && resultado.result !== undefined ? resultado.result : resultado);
+    tx.onerror = () => reject(tx.error);
+  }));
+}
+
+async function guardarMedio(registro) {
+  return transaccion('readwrite', (s) => s.put(registro));
+}
+
+async function leerMedio(id) {
+  return transaccion('readonly', (s) => s.get(id));
+}
+
+async function borrarMedio(id) {
+  return transaccion('readwrite', (s) => s.delete(id));
+}
+
+async function listarMedios() {
+  return transaccion('readonly', (s) => s.getAll());
+}
+
+/** Espacio ocupado por las pruebas guardadas, en MB. */
+async function espacioUsadoMB() {
+  try {
+    const todos = await listarMedios();
+    const bytes = todos.reduce((s, m) => s + (m.blob?.size || 0), 0);
+    return Math.round((bytes / 1048576) * 10) / 10;
+  } catch { return 0; }
+}
+
+/** Elimina las pruebas que ya no pertenecen a ningun registro vivo. */
+async function limpiarHuerfanos(idsVivos) {
+  const vivos = new Set(idsVivos);
+  const todos = await listarMedios();
+  let borrados = 0;
+  for (const m of todos) {
+    if (!vivos.has(m.registroId)) { await borrarMedio(m.id); borrados++; }
+  }
+  return borrados;
+}
+
+/** Lee un File como ArrayBuffer. */
+function comoBuffer(file) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.onerror = () => reject(new Error('No se pudo leer el archivo.'));
+    fr.readAsArrayBuffer(file);
+  });
+}
+
+/** Carga un File en un elemento <img> ya decodificado. */
+function comoImagen(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { resolve({ img, revocar: () => URL.revokeObjectURL(url) }); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('El archivo no es una imagen legible.')); };
+    img.src = url;
+  });
+}
+
+/**
+ * Procesa una foto: miniatura, hash perceptual y metadatos.
+ * @returns {Promise<{tipo:'foto', blob:Blob, url:string, hash:string, exif:object,
+ *                    ancho:number, alto:number, bytes:number, fechaArchivo:number}>}
+ */
+async function procesarFoto(file) {
+  if (file.size > LIMITE_ARCHIVO_MB * 1048576) {
+    throw new Error(`La foto pesa ${(file.size / 1048576).toFixed(1)} MB y el limite es ${LIMITE_ARCHIVO_MB} MB.`);
+  }
+  // El EXIF se lee del original: el canvas lo elimina al redibujar.
+  const exif = leerEXIF(await comoBuffer(file)) || {};
+  const { img, revocar } = await comoImagen(file);
+
+  try {
+    const escala = Math.min(1, ANCHO_MINIATURA / Math.max(img.width, img.height));
+    const ancho = Math.max(1, Math.round(img.width * escala));
+    const alto = Math.max(1, Math.round(img.height * escala));
+
+    const lienzo = document.createElement('canvas');
+    lienzo.width = ancho; lienzo.height = alto;
+    lienzo.getContext('2d').drawImage(img, 0, 0, ancho, alto);
+
+    // Huella perceptual: 8x8 en escala de grises con luminancia Rec. 601.
+    const chico = document.createElement('canvas');
+    chico.width = 8; chico.height = 8;
+    const ctx = chico.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0, 8, 8);
+    const px = ctx.getImageData(0, 0, 8, 8).data;
+    const grises = [];
+    for (let i = 0; i < px.length; i += 4) {
+      grises.push(0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]);
+    }
+
+    const blob = await new Promise((res) => lienzo.toBlob(res, 'image/jpeg', 0.72));
+    if (!blob) throw new Error('No se pudo generar la miniatura.');
+
+    return {
+      tipo: 'foto',
+      blob,
+      url: URL.createObjectURL(blob),
+      hash: hashPercepcion(grises),
+      exif,
+      ancho: img.width,
+      alto: img.height,
+      bytes: file.size,
+      fechaArchivo: file.lastModified || null,
+      nombre: file.name,
+    };
+  } finally {
+    revocar();
+  }
+}
+
+/**
+ * Procesa un video: se guarda el archivo y se extrae un fotograma de portada.
+ * Un video del momento es mucho mas costoso de falsificar que una foto, por eso
+ * puntua mas, pero tambien ocupa mucho mas: de ahi el limite por archivo.
+ */
+async function procesarVideo(file) {
+  if (file.size > LIMITE_ARCHIVO_MB * 1048576) {
+    throw new Error(`El video pesa ${(file.size / 1048576).toFixed(1)} MB y el limite es ${LIMITE_ARCHIVO_MB} MB. Graba un clip mas corto.`);
+  }
+  const url = URL.createObjectURL(file);
+  const video = document.createElement('video');
+  video.preload = 'metadata';
+  video.muted = true;
+  video.playsInline = true;
+
+  const meta = await new Promise((resolve, reject) => {
+    video.onloadedmetadata = () => resolve({ duracion: video.duration, ancho: video.videoWidth, alto: video.videoHeight });
+    video.onerror = () => reject(new Error('El archivo no es un video legible.'));
+    video.src = url;
+  });
+
+  // Portada del segundo 0,5 (o del principio si el clip es mas corto).
+  let portada = null;
+  try {
+    await new Promise((resolve) => {
+      video.onseeked = resolve;
+      video.currentTime = Math.min(0.5, Math.max(0, (meta.duracion || 1) / 2));
+      setTimeout(resolve, 2500); // no bloquear si el navegador no emite el evento
+    });
+    const escala = Math.min(1, ANCHO_MINIATURA / Math.max(meta.ancho || 1, meta.alto || 1));
+    const lienzo = document.createElement('canvas');
+    lienzo.width = Math.max(1, Math.round((meta.ancho || 320) * escala));
+    lienzo.height = Math.max(1, Math.round((meta.alto || 240) * escala));
+    lienzo.getContext('2d').drawImage(video, 0, 0, lienzo.width, lienzo.height);
+    portada = lienzo.toDataURL('image/jpeg', 0.6);
+  } catch { /* sin portada, el video sigue valiendo */ }
+
+  URL.revokeObjectURL(url);
+
+  return {
+    tipo: 'video',
+    blob: file,
+    url: URL.createObjectURL(file),
+    portada,
+    hash: null, // el hash perceptual es para imagenes fijas
+    exif: {},
+    duracion: Math.round((meta.duracion || 0) * 10) / 10,
+    ancho: meta.ancho || null,
+    alto: meta.alto || null,
+    bytes: file.size,
+    fechaArchivo: file.lastModified || null,
+    nombre: file.name,
+  };
+}
+
+/** Enruta segun el tipo MIME del archivo. */
+async function procesarMedio(file) {
+  if (!file) throw new Error('No se recibio ningun archivo.');
+  if (file.type.startsWith('video/')) return procesarVideo(file);
+  if (file.type.startsWith('image/')) return procesarFoto(file);
+  throw new Error('Solo se admiten imagenes y videos.');
+}
+
+/** Crea el selector de archivo con captura directa de camara en movil. */
+function selectorMedio(alElegir, { video = true } = {}) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = video ? 'image/*,video/*' : 'image/*';
+  // En movil abre la camara trasera directamente en vez del carrete.
+  input.capture = 'environment';
+  input.style.display = 'none';
+  input.addEventListener('change', () => {
+    const f = input.files?.[0];
+    if (f) alElegir(f);
+    input.value = '';
+  });
+  return input;
+}
+
+  __exp.LIMITE_ARCHIVO_MB = LIMITE_ARCHIVO_MB;
+  __exp.PRESUPUESTO_TOTAL_MB = PRESUPUESTO_TOTAL_MB;
+  __exp.guardarMedio = guardarMedio;
+  __exp.leerMedio = leerMedio;
+  __exp.borrarMedio = borrarMedio;
+  __exp.listarMedios = listarMedios;
+  __exp.espacioUsadoMB = espacioUsadoMB;
+  __exp.limpiarHuerfanos = limpiarHuerfanos;
+  __exp.procesarFoto = procesarFoto;
+  __exp.procesarVideo = procesarVideo;
+  __exp.procesarMedio = procesarMedio;
+  __exp.selectorMedio = selectorMedio;
 });
 
 __def("src/core/ranking.js", function (__exp, __req) {
@@ -3946,7 +4605,9 @@ function duelo(a, b) {
 
 __def("src/ui/vistas/panel.js", function (__exp, __req) {
 /** panel.js — Vista principal: estado del jugador y del planeta de un vistazo. */
-const { el, num, co2, litros, tarjetaMetrica, graficoLinea, graficoDonut, mapaCalor, progreso, haceCuanto, vacio } = __req("src/ui/componentes.js");
+const { el, num, co2, litros, tarjetaMetrica, graficoLinea, graficoDonut, mapaCalor, progreso, haceCuanto, vacio, modal } = __req("src/ui/componentes.js");
+const { leerMedio } = __req("src/ui/medios.js");
+const { NIVELES_EVIDENCIA } = __req("src/core/evidencia.js");
 const { CATEGORIAS, accion } = __req("src/data/acciones.js");
 const { progresion, siguienteRango } = __req("src/core/nivel.js");
 const { serieDiaria, compararPeriodos, recomendarPalanca } = __req("src/core/analitica.js");
@@ -4118,7 +4779,8 @@ function vistaPanel(ctx) {
       el('table', {}, [
         el('thead', {}, [el('tr', {}, [
           el('th', { texto: 'Accion' }), el('th', { texto: 'Cantidad' }),
-          el('th', { texto: 'CO2e' }), el('th', { texto: 'Puntos' }), el('th', { texto: 'Cuando' }),
+          el('th', { texto: 'CO2e' }), el('th', { texto: 'Puntos' }),
+          el('th', { texto: 'Prueba' }), el('th', { texto: 'Cuando' }),
         ])]),
         el('tbody', {}, ultimos.map((reg) => {
           const a = accion(reg.accionId);
@@ -4127,6 +4789,19 @@ function vistaPanel(ctx) {
             el('td', { clase: 'mono', texto: `${num(reg.cantidad)} ${reg.unidad}` }),
             el('td', { clase: 'mono', estilo: 'color:var(--verde)', texto: co2(reg.impacto.co2e) }),
             el('td', { clase: 'mono', texto: `+${reg.puntos}` }),
+            el('td', {}, [
+              reg.medio
+                ? el('button', {
+                  clase: 'chip',
+                  estilo: `border-color:${NIVELES_EVIDENCIA[reg.medio.nivel]?.color || 'var(--borde)'}`,
+                  texto: `${reg.medio.tipo === 'video' ? '🎥' : '📷'} ×${reg.medio.factor}`,
+                  title: NIVELES_EVIDENCIA[reg.medio.nivel]?.etiqueta || 'Prueba adjunta',
+                  onclick: () => verPrueba(reg),
+                })
+                : reg.evidencia === 'gps'
+                  ? el('span', { clase: 'chip estatico', texto: '📍 GPS' })
+                  : el('span', { clase: 'mini', texto: '—' }),
+            ]),
             el('td', { clase: 'mini', texto: haceCuanto(reg.fecha) }),
           ]);
         })),
@@ -4135,6 +4810,34 @@ function vistaPanel(ctx) {
   ]));
 
   return raiz;
+}
+
+
+/** Abre la prueba grafica guardada en IndexedDB. Sin ella, la evidencia es un acto de fe. */
+async function verPrueba(registro) {
+  const meta = NIVELES_EVIDENCIA[registro.medio?.nivel];
+  const cuerpo = el('div', { clase: 'centrado' }, [el('div', { clase: 'pulso', texto: 'Cargando prueba...' })]);
+  modal(cuerpo, { titulo: 'Prueba adjunta', ancho: 520 });
+  try {
+    const m = await leerMedio(registro.medio.id);
+    cuerpo.innerHTML = '';
+    if (!m?.blob) {
+      cuerpo.appendChild(el('div', { clase: 'aviso alerta' }, ['La prueba ya no esta disponible en este dispositivo.']));
+      return;
+    }
+    const url = URL.createObjectURL(m.blob);
+    cuerpo.appendChild(m.tipo === 'video'
+      ? el('video', { src: url, controls: 'true', playsinline: 'true', estilo: 'width:100%;border-radius:11px;background:#000' })
+      : el('img', { src: url, alt: 'Prueba', estilo: 'width:100%;border-radius:11px' }));
+    cuerpo.appendChild(el('div', { clase: 'fila entre', estilo: 'margin-top:13px' }, [
+      el('span', { clase: 'pastilla', estilo: `background:${meta?.color || '#888'}22;color:${meta?.color || '#888'}`,
+        texto: `${meta?.etiqueta || 'Prueba'} · ×${registro.medio.factor}` }),
+      el('span', { clase: 'mini', texto: haceCuanto(registro.fecha) }),
+    ]));
+  } catch (e) {
+    cuerpo.innerHTML = '';
+    cuerpo.appendChild(el('div', { clase: 'aviso error' }, ['No se pudo abrir la prueba guardada.']));
+  }
 }
 
   __exp.vistaPanel = vistaPanel;
@@ -4493,6 +5196,8 @@ const { validarRegistro, NIVELES } = __req("src/core/validacion.js");
 const { claveDia } = __req("src/core/rachas.js");
 const { iniciarSeguimiento, analizarTraza, verificarContra } = __req("src/core/gps.js");
 const { parsearTraza, metadatosTraza } = __req("src/core/gpx.js");
+const { procesarMedio, selectorMedio, guardarMedio, LIMITE_ARCHIVO_MB } = __req("src/ui/medios.js");
+const { evaluarEvidencia, NIVELES_EVIDENCIA } = __req("src/core/evidencia.js");
 
 let filtroCat = 'todas';
 let busqueda = '';
@@ -4608,6 +5313,10 @@ function abrirFormulario(a, ctx) {
   const evidencia = el('input', { type: 'checkbox' });
   const previa = el('div', { clase: 'tarjeta', estilo: 'margin:15px 0' });
 
+  // Se declara aqui, antes de 'actualizar', porque esa funcion lee 'medio' para
+  // mostrar el multiplicador por evidencia y se invoca nada mas definirse.
+  let medio = null;
+
   const actualizar = (valor) => {
     const q = Math.max(0, Number(valor) || 0);
     const imp = calcularImpacto(a.id, q, { pais: estado.perfil.pais });
@@ -4623,7 +5332,8 @@ function abrirFormulario(a, ctx) {
       <div class="divisor"></div>
       <div class="mini"><strong>Linea base:</strong> ${esc(a.base)}</div>
       <div class="mini" style="margin-top:5px"><strong>Formula:</strong> ${desglose.porCO2e} (CO2e) + ${desglose.porAgua} (agua) + ${desglose.porResiduo} (residuo)
-        × dificultad ${desglose.factores.dificultad} × rareza ${desglose.factores.rareza}</div>
+        × dificultad ${desglose.factores.dificultad} × rareza ${desglose.factores.rareza}${
+          medio ? ` × evidencia ${evaluarEvidencia({ tipo: medio.tipo, exif: medio.exif, fechaArchivo: medio.fechaArchivo, hash: medio.hash, hashesPrevios: estado.medios || [], ancho: medio.ancho, alto: medio.alto }).factor}` : ''}</div>
       ${val.mensajes.length ? `<div class="aviso ${val.nivel === 'bloqueo' ? 'error' : 'alerta'}" style="margin-top:11px">
         <span>${val.nivel === 'bloqueo' ? '⛔' : '⚠️'}</span><div>${val.mensajes.map(esc).join('<br>')}</div></div>` : ''}`;
   };
@@ -4643,6 +5353,11 @@ function abrirFormulario(a, ctx) {
   };
   const bloqueGPS = a.cat === 'movilidad' && a.unidad === 'km'
     ? construirVerificacion(a, aplicarMedida)
+    : null;
+
+  // Prueba grafica: solo para acciones que se pueden fotografiar de verdad.
+  const bloqueMedios = a.evidencia !== 'ninguna'
+    ? construirMedios(a, estado, (m) => { medio = m; actualizar(campo.value); })
     : null;
 
   const contenido = el('div', {}, [
@@ -4667,19 +5382,33 @@ function abrirFormulario(a, ctx) {
             [evidencia, `Tengo evidencia (${a.evidencia}) — sube el indice de confianza`])
           : null,
         bloqueGPS,
+        bloqueMedios,
         previa,
         el('button', {
           clase: 'btn primario bloque',
           texto: 'Registrar',
-          onclick: () => {
+          onclick: async () => {
             const res = ctx.almacen.registrar(a.id, Number(campo.value), {
               nota: [nota.value, prueba?.resumen].filter(Boolean).join(' · '),
               evidencia: prueba ? 'gps' : (evidencia.checked ? a.evidencia : null),
               prueba: prueba || null,
+              medio,
             });
             if (!res.ok) {
               toast({ titulo: 'No se pudo registrar', texto: res.mensajes.join(' '), tipo: 'error', icono: '⛔' });
               return;
+            }
+            // El binario solo se guarda si el registro salio adelante, para no
+            // dejar archivos huerfanos ocupando espacio.
+            if (medio?.blob && medio.id) {
+              try {
+                await guardarMedio({
+                  id: medio.id, registroId: res.registro.id, blob: medio.blob,
+                  tipo: medio.tipo, portada: medio.portada || null, fecha: new Date().toISOString(),
+                });
+              } catch (e) {
+                toast({ titulo: 'La prueba no se pudo guardar', texto: 'El registro si se guardo.', tipo: 'error', icono: '⚠️' });
+              }
             }
             cerrar();
             celebrar(res, a);
@@ -4838,6 +5567,96 @@ function construirVerificacion(a, aplicarMedida) {
 
   pintar();
   return salida;
+}
+
+
+/**
+ * Bloque de prueba grafica.
+ *
+ * Que la persona adjunte una foto no verifica nada por si solo: cualquiera
+ * descarga una imagen. Lo que suma puntos es lo COMPROBABLE de esa foto —que
+ * se tomo hoy, cerca de ti, y que no se ha usado antes—, y eso se evalua aqui
+ * mismo, en el navegador, mostrando el razonamiento completo.
+ */
+function construirMedios(a, estado, alAdjuntar) {
+  const caja = el('div', { clase: 'tarjeta', estilo: 'margin-top:13px' });
+  let actual = null;
+
+  const pintar = (error = null, cargando = false) => {
+    caja.innerHTML = '';
+    caja.appendChild(el('div', { clase: 'fila entre', estilo: 'margin-bottom:9px' }, [
+      el('span', { clase: 'etiqueta', texto: 'Prueba con foto o video' }),
+      actual ? el('button', {
+        clase: 'btn s', texto: 'Quitar',
+        onclick: () => { if (actual?.url) URL.revokeObjectURL(actual.url); actual = null; alAdjuntar(null); pintar(); },
+      }) : null,
+    ]));
+
+    if (cargando) {
+      caja.appendChild(el('div', { clase: 'aviso info pulso' }, ['⏳ Procesando la prueba...']));
+      return;
+    }
+    if (error) {
+      caja.appendChild(el('div', { clase: 'aviso error', estilo: 'margin-bottom:11px' }, ['⚠️ ' + error]));
+    }
+
+    if (actual) {
+      const ev = evaluarEvidencia({
+        tipo: actual.tipo, exif: actual.exif, fechaArchivo: actual.fechaArchivo,
+        hash: actual.hash, hashesPrevios: estado.medios || [],
+        ancho: actual.ancho, alto: actual.alto, bytes: actual.bytes,
+      });
+      const meta = NIVELES_EVIDENCIA[ev.nivel];
+
+      caja.appendChild(el('div', { clase: 'fila', estilo: 'gap:13px;align-items:flex-start;margin-bottom:11px' }, [
+        actual.tipo === 'video'
+          ? el('video', { src: actual.url, controls: 'true', playsinline: 'true', muted: 'true',
+              estilo: 'width:150px;border-radius:9px;background:#000' })
+          : el('img', { src: actual.url, alt: 'Prueba adjunta',
+              estilo: 'width:150px;border-radius:9px;object-fit:cover' }),
+        el('div', { clase: 'crece' }, [
+          el('div', { clase: 'pastilla', estilo: `background:${meta.color}22;color:${meta.color};margin-bottom:7px`,
+            texto: `${meta.etiqueta} · ×${ev.factor}` }),
+          el('ul', { estilo: 'margin:0 0 0 17px;padding:0;font-size:11.5px;color:var(--texto-2);line-height:1.6' },
+            ev.motivos.map((m) => el('li', { texto: m }))),
+          actual.tipo === 'video' && actual.duracion
+            ? el('div', { clase: 'mini', estilo: 'margin-top:5px', texto: `${actual.duracion} s de video` })
+            : null,
+        ]),
+      ]));
+    }
+
+    const input = selectorMedio(async (file) => {
+      pintar(null, true);
+      try {
+        const m = await procesarMedio(file);
+        m.id = `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+        if (actual?.url) URL.revokeObjectURL(actual.url);
+        actual = m;
+        alAdjuntar(m);
+        pintar();
+      } catch (e) {
+        actual = null;
+        alAdjuntar(null);
+        pintar(e.message || 'No se pudo procesar el archivo.');
+      }
+    });
+
+    caja.appendChild(el('div', { clase: 'fila envuelve', estilo: 'gap:7px' }, [
+      el('button', {
+        clase: `btn s${actual ? '' : ' primario'}`,
+        texto: actual ? '🔄 Cambiar prueba' : '📷 Hacer foto o video',
+        onclick: () => input.click(),
+      }),
+      input,
+    ]));
+
+    caja.appendChild(el('div', { clase: 'mini', estilo: 'margin-top:9px' },
+      [`En el movil se abre la camara directamente. Se guarda una miniatura, no el original, para no llenar el almacenamiento (limite ${LIMITE_ARCHIVO_MB} MB por archivo). Nada se envia a ningun servidor.`]));
+  };
+
+  pintar();
+  return caja;
 }
 
   __exp.vistaRegistrar = vistaRegistrar;

@@ -14,6 +14,7 @@ import { claveDia, calcularRacha, congelacionesGanadas } from './rachas.js';
 import { detectarAscenso, nivelDesdeXP } from './nivel.js';
 import { construirResumen } from './analitica.js';
 import { evaluarLogros } from './logros.js';
+import { evaluarEvidencia } from './evidencia.js';
 import { misionesVigentes, evaluarMision, misionesPorAire } from './misiones.js';
 
 export const VERSION_ESTADO = 1;
@@ -53,6 +54,7 @@ export function estadoInicial(nombre = 'Guardian', paisCod = 'WW') {
     logros: [],
     misionesCompletadas: [],
     canjes: [],
+    medios: [],
     huella: null,
     huellaEntradas: null,
     aire: { ultimaLectura: null, historial: [] },
@@ -176,6 +178,23 @@ export function crearAlmacen(inicial = null) {
       const bonus = bonusDiversidad(catsHoy.size);
       const aire = factorAire(lecturaAire?.aqi, a.cat);
 
+      // Prueba grafica: se evalua su credibilidad, no su mera existencia.
+      const medio = opciones.medio || null;
+      const evidenciaGrafica = medio
+        ? evaluarEvidencia({
+          tipo: medio.tipo,
+          exif: medio.exif,
+          fechaArchivo: medio.fechaArchivo,
+          hash: medio.hash,
+          hashesPrevios: estado.medios || [],
+          ahora: fecha.getTime(),
+          ubicacion: opciones.ubicacion || null,
+          bytes: medio.bytes,
+          ancho: medio.ancho,
+          alto: medio.alto,
+        })
+        : evaluarEvidencia({});
+
       const { puntos, desglose } = calcularPuntos({
         accionId,
         impacto,
@@ -183,7 +202,7 @@ export function crearAlmacen(inicial = null) {
         acumuladoCategoriaHoy: acumuladoCat,
         acumuladoDiaHoy: acumuladoDia,
         contribuyeMision: contribuye,
-        factorEvento: multActivo * bonus.factor * aire.factor,
+        factorEvento: multActivo * bonus.factor * aire.factor * evidenciaGrafica.factor,
       });
 
       const registro = {
@@ -195,13 +214,28 @@ export function crearAlmacen(inicial = null) {
         impacto: { co2e: impacto.co2e, agua: impacto.agua, residuo: impacto.residuo, kwh: impacto.kwh },
         puntos,
         desglose,
-        evidencia: opciones.evidencia || null,
+        evidencia: opciones.evidencia || (medio ? medio.tipo : null),
         nota: opciones.nota || '',
-        sospecha: val.sospecha,
+        sospecha: Math.max(val.sospecha, evidenciaGrafica.sospecha || 0),
+        medio: medio
+          ? {
+            id: medio.id || null,
+            tipo: medio.tipo,
+            hash: medio.hash || null,
+            nivel: evidenciaGrafica.nivel,
+            factor: evidenciaGrafica.factor,
+            duracion: medio.duracion ?? null,
+          }
+          : null,
       };
 
       const xpAntes = estado.perfil.xp;
       estado.registros.push(registro);
+      // El hash se guarda aparte para que la deteccion de duplicados siga
+      // funcionando aunque el registro se elimine mas adelante.
+      if (medio?.hash && !evidenciaGrafica.duplicado) {
+        estado.medios = [...(estado.medios || []), { hash: medio.hash, registroId: registro.id, id: medio.id || null }];
+      }
       estado.perfil.puntos += puntos;
       estado.perfil.puntosHistoricos += puntos;
       estado.perfil.xp += Math.round(puntos * 0.7);
@@ -251,6 +285,7 @@ export function crearAlmacen(inicial = null) {
         congelacionesGanadas: ganadas,
         bonusDiversidad: bonus,
         bonusAire: aire,
+        evidencia: evidenciaGrafica,
         racha: nuevaRacha,
       };
     },

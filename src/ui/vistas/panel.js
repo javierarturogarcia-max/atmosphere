@@ -1,5 +1,7 @@
 /** panel.js — Vista principal: estado del jugador y del planeta de un vistazo. */
-import { el, num, co2, litros, tarjetaMetrica, graficoLinea, graficoDonut, mapaCalor, progreso, haceCuanto, vacio } from '../componentes.js';
+import { el, num, co2, litros, tarjetaMetrica, graficoLinea, graficoDonut, mapaCalor, progreso, haceCuanto, vacio, modal } from '../componentes.js';
+import { leerMedio } from '../medios.js';
+import { NIVELES_EVIDENCIA } from '../../core/evidencia.js';
 import { CATEGORIAS, accion } from '../../data/acciones.js';
 import { progresion, siguienteRango } from '../../core/nivel.js';
 import { serieDiaria, compararPeriodos, recomendarPalanca } from '../../core/analitica.js';
@@ -171,7 +173,8 @@ export function vistaPanel(ctx) {
       el('table', {}, [
         el('thead', {}, [el('tr', {}, [
           el('th', { texto: 'Accion' }), el('th', { texto: 'Cantidad' }),
-          el('th', { texto: 'CO2e' }), el('th', { texto: 'Puntos' }), el('th', { texto: 'Cuando' }),
+          el('th', { texto: 'CO2e' }), el('th', { texto: 'Puntos' }),
+          el('th', { texto: 'Prueba' }), el('th', { texto: 'Cuando' }),
         ])]),
         el('tbody', {}, ultimos.map((reg) => {
           const a = accion(reg.accionId);
@@ -180,6 +183,19 @@ export function vistaPanel(ctx) {
             el('td', { clase: 'mono', texto: `${num(reg.cantidad)} ${reg.unidad}` }),
             el('td', { clase: 'mono', estilo: 'color:var(--verde)', texto: co2(reg.impacto.co2e) }),
             el('td', { clase: 'mono', texto: `+${reg.puntos}` }),
+            el('td', {}, [
+              reg.medio
+                ? el('button', {
+                  clase: 'chip',
+                  estilo: `border-color:${NIVELES_EVIDENCIA[reg.medio.nivel]?.color || 'var(--borde)'}`,
+                  texto: `${reg.medio.tipo === 'video' ? '🎥' : '📷'} ×${reg.medio.factor}`,
+                  title: NIVELES_EVIDENCIA[reg.medio.nivel]?.etiqueta || 'Prueba adjunta',
+                  onclick: () => verPrueba(reg),
+                })
+                : reg.evidencia === 'gps'
+                  ? el('span', { clase: 'chip estatico', texto: '📍 GPS' })
+                  : el('span', { clase: 'mini', texto: '—' }),
+            ]),
             el('td', { clase: 'mini', texto: haceCuanto(reg.fecha) }),
           ]);
         })),
@@ -188,4 +204,32 @@ export function vistaPanel(ctx) {
   ]));
 
   return raiz;
+}
+
+
+/** Abre la prueba grafica guardada en IndexedDB. Sin ella, la evidencia es un acto de fe. */
+async function verPrueba(registro) {
+  const meta = NIVELES_EVIDENCIA[registro.medio?.nivel];
+  const cuerpo = el('div', { clase: 'centrado' }, [el('div', { clase: 'pulso', texto: 'Cargando prueba...' })]);
+  modal(cuerpo, { titulo: 'Prueba adjunta', ancho: 520 });
+  try {
+    const m = await leerMedio(registro.medio.id);
+    cuerpo.innerHTML = '';
+    if (!m?.blob) {
+      cuerpo.appendChild(el('div', { clase: 'aviso alerta' }, ['La prueba ya no esta disponible en este dispositivo.']));
+      return;
+    }
+    const url = URL.createObjectURL(m.blob);
+    cuerpo.appendChild(m.tipo === 'video'
+      ? el('video', { src: url, controls: 'true', playsinline: 'true', estilo: 'width:100%;border-radius:11px;background:#000' })
+      : el('img', { src: url, alt: 'Prueba', estilo: 'width:100%;border-radius:11px' }));
+    cuerpo.appendChild(el('div', { clase: 'fila entre', estilo: 'margin-top:13px' }, [
+      el('span', { clase: 'pastilla', estilo: `background:${meta?.color || '#888'}22;color:${meta?.color || '#888'}`,
+        texto: `${meta?.etiqueta || 'Prueba'} · ×${registro.medio.factor}` }),
+      el('span', { clase: 'mini', texto: haceCuanto(registro.fecha) }),
+    ]));
+  } catch (e) {
+    cuerpo.innerHTML = '';
+    cuerpo.appendChild(el('div', { clase: 'aviso error' }, ['No se pudo abrir la prueba guardada.']));
+  }
 }
