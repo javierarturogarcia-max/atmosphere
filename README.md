@@ -103,6 +103,36 @@ tope     = 2.500 pts/día
 
 ---
 
+## Publicación
+
+El sitio es estático: cualquier alojamiento de archivos estáticos sirve, sin
+configuración especial y sin variables de entorno. Todas las rutas son
+relativas, así que funciona igual en la raíz de un dominio que en una
+subcarpeta de proyecto.
+
+### GitHub Pages (configurado en este repositorio)
+
+El flujo de trabajo `.github/workflows/pages.yml` ejecuta las pruebas,
+comprueba que `dist/` no esté desfasado respecto a `src/` y publica. Para
+activarlo una sola vez:
+
+**Settings → Pages → Build and deployment → Source: _GitHub Actions_**
+
+A partir de ahí, cada `push` a la rama publica automáticamente en
+`https://<usuario>.github.io/atmosphere/`.
+
+### Alternativas equivalentes
+
+| Alojamiento | Ancho de banda gratuito | Configuración |
+|---|---|---|
+| GitHub Pages | 100 GB/mes | Ninguna: el código ya está aquí |
+| Cloudflare Pages | Ilimitado | Conectar el repositorio; carpeta de salida `/`, sin comando de compilación |
+| Netlify | 100 GB/mes | Igual: sin comando de compilación, directorio `.` |
+
+En los tres casos el comando de compilación se deja **vacío**: no hay nada que
+compilar. `npm run build` solo genera el archivo único de `dist/`, que es un
+extra, no un requisito para servir el sitio.
+
 ## Documentación
 
 - **[CIENCIA.md](CIENCIA.md)** — metodología completa, factores, fuentes y limitaciones asumidas.

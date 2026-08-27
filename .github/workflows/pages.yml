@@ -1,0 +1,70 @@
+# Despliegue de Atmosphere en GitHub Pages.
+#
+# El sitio es estatico y sin dependencias de produccion: no hay paso de
+# compilacion que ejecutar, asi que se publica el repositorio tal cual. Aun asi
+# se pasan las pruebas antes de desplegar, para no publicar una version rota.
+
+name: Desplegar en GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+      - 'claude/environmental-gamification-app-s8eaxm'
+  workflow_dispatch:
+
+# Permisos minimos que necesita el despliegue de Pages.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Un despliegue a la vez; no se cancelan los que ya estan en curso.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  pruebas:
+    name: Pruebas del motor
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Ejecutar las 85 pruebas
+        run: npm test
+
+      - name: Reconstruir el archivo unico y comprobar que no ha quedado desfasado
+        run: |
+          npm run build
+          if ! git diff --quiet -- dist/; then
+            echo "::error::dist/ esta desfasado respecto a src/. Ejecuta 'npm run build' y vuelve a hacer commit."
+            git diff --stat -- dist/
+            exit 1
+          fi
+
+  desplegar:
+    name: Publicar
+    needs: pruebas
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.despliegue.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+
+      # El sitio se sirve desde la raiz del repositorio: index.html ya esta ahi
+      # y todas las rutas son relativas, asi que funciona igual en la raiz del
+      # dominio que en una subcarpeta de proyecto.
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+
+      - id: despliegue
+        uses: actions/deploy-pages@v4
