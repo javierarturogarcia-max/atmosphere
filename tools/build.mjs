@@ -20,6 +20,7 @@ const ENTRADA = resolve(RAIZ, 'src/main.js');
 
 const RE_IMPORT = /^import\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"];?\s*$/;
 const RE_IMPORT_SIMPLE = /^import\s*['"]([^'"]+)['"];?\s*$/;
+const RE_IMPORT_NS = /^import\s*\*\s*as\s+([A-Za-z0-9_$]+)\s+from\s*['"]([^'"]+)['"];?\s*$/;
 const RE_EXPORT_LLAVES = /^export\s*\{([^}]+)\}\s*;?\s*$/;
 
 const modulos = new Map();
@@ -50,6 +51,16 @@ function analizar(ruta) {
       const destino = resolve(dirname(ruta), mImp[2]);
       deps.push(destino);
       salida.push(`const { ${nombres.join(', ')} } = __req(${JSON.stringify(id(destino))});`);
+      continue;
+    }
+    // import * as ns from './x.js'  ->  const ns = __req('x')
+    // El objeto de exportaciones ya es un espacio de nombres plano, asi que el
+    // acceso ns.funcion() funciona sin envoltorio adicional.
+    const mNS = linea.match(RE_IMPORT_NS);
+    if (mNS) {
+      const destino = resolve(dirname(ruta), mNS[2]);
+      deps.push(destino);
+      salida.push(`const ${mNS[1]} = __req(${JSON.stringify(id(destino))});`);
       continue;
     }
     const mSimple = linea.match(RE_IMPORT_SIMPLE);

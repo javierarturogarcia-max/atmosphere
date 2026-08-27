@@ -305,6 +305,58 @@ tercer registro. La miniatura ronda los 120 kB y sigue siendo prueba visual
 válida. Los metadatos EXIF se leen del archivo original **antes** de reescalar,
 porque el canvas los descarta al redibujar.
 
+
+## 8quinquies. Sincronización: por qué el cliente no puede escribir su puntuación
+
+La sincronización con Postgres es **opcional y está desactivada por defecto**.
+La app sigue funcionando entera sin cuenta; la nube solo añade lo que en local
+es imposible: comparar con personas reales y conservar el historial al cambiar
+de dispositivo.
+
+### El error que arruina el 90 % de los rankings
+
+Si la aplicación envía *«tengo 50.000 puntos»*, cualquiera con la consola del
+navegador abierta envía lo mismo, y la tabla deja de significar nada. El diseño
+aquí lo impide por construcción, en tres capas:
+
+1. **El cliente solo inserta registros individuales**, nunca totales. Los
+   registros son inmutables: no hay políticas de `UPDATE` ni `DELETE`.
+2. **Un disparador del servidor recalcula** puntos, XP, nivel y totales a
+   partir de esos registros, con la misma curva de nivel que el cliente.
+3. **Permisos por columna.** Aunque la política de seguridad por fila permita
+   actualizar el perfil propio, `GRANT UPDATE (nombre, pais, publico)` deja
+   fuera físicamente las columnas de puntuación. No es una comprobación que se
+   pueda saltar: es un permiso que no existe.
+
+Además, el tope diario de 2.500 puntos se replica en el servidor, porque la
+validación del cliente se evita llamando a la API directamente.
+
+### Qué viaja y qué no
+
+Verificado en la prueba de integración inspeccionando el cuerpo HTTP real:
+
+| Se envía | No se envía |
+|---|---|
+| Acción, categoría, cantidad, unidad | Fotos y vídeos de prueba |
+| Impacto (CO₂e, agua, residuo) | Notas personales (pueden citar a terceros) |
+| Puntos y fecha | Coordenadas y trazas GPS |
+| Nivel de evidencia (para auditar) | El hash perceptual de las imágenes |
+
+Los registros son **privados en el servidor**: ni siquiera los compañeros de
+grupo ven tu detalle. Al ranking solo llegan los agregados del perfil, y
+únicamente si marcas el perfil como público.
+
+### Por qué sin la biblioteca oficial
+
+Se habla directamente con la API REST (PostgREST y GoTrue) mediante `fetch`.
+Son cuatro llamadas HTTP: `@supabase/supabase-js` pesaría más que todo el
+módulo, rompería el empaquetador de archivo único y añadiría la primera
+dependencia de producción del proyecto.
+
+La subida es **idempotente**: la clave primaria de `registros` es el id
+generado en el dispositivo, así que reenviar un lote tras un corte de red no
+duplica nada.
+
 ## 9. Limitaciones que asumimos por escrito
 
 1. **Los factores son promedios.** Tu coche, tu red y tu supermercado concretos difieren. Las cifras son órdenes de magnitud correctos, no contabilidad.

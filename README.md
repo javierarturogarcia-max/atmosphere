@@ -28,6 +28,8 @@ La mayoría de las apps de sostenibilidad fallan por una de estas tres razones:
 
 **Sistema de juego** — XP con curva superlineal, 10 rangos, 47 insignias evaluadas por predicados puros, misiones diarias/semanales/mensuales generadas de forma determinista, rachas con congelaciones, 6 ligas, 16 recompensas canjeables.
 
+**Sincronización opcional en la nube** — Postgres (Supabase) con seguridad por fila, grupos por clase o centro, y ranking con personas reales. Desactivada por defecto: la app funciona entera sin cuenta. **El cliente nunca escribe su propia puntuación** — solo inserta registros inmutables, y el servidor deriva los totales con un disparador. Ver [`db/esquema.sql`](db/esquema.sql).
+
 **Analítica** — regresión OLS y Theil-Sen, test de tendencia de Mann-Kendall con corrección por empates, media móvil, EWMA, bootstrap, índices de Shannon/Pielou/Gini, perfiles circadiano y semanal, mapa de calor de constancia.
 
 **Calculadora de huella** — método híbrido ACV + EEIO, mix eléctrico de 38 países, forzamiento radiativo de la aviación, 8 escenarios contrafactuales ordenados por ahorro.
@@ -57,7 +59,7 @@ La mayoría de las apps de sostenibilidad fallan por una de estas tres razones:
 
 ```bash
 npm run dev      # servidor local en http://localhost:4173
-npm test         # 134 pruebas del motor
+npm test         # 146 pruebas del motor
 npm run build    # genera dist/atmosphere.html (un solo archivo, sin dependencias)
 npm run verify   # pruebas + build
 ```
@@ -94,15 +96,18 @@ src/
 │   ├── gps.js            Trazas, inferencia de modo y verificación
 │   ├── gpx.js            Lectura de archivos GPX y TCX
 │   ├── evidencia.js      EXIF, hash perceptual y credibilidad de pruebas
+│   ├── nube.js           Cliente REST de Supabase, sin dependencias
 │   ├── ranking.js        Ligas y cohorte log-normal
 │   ├── rng.js            Aleatoriedad determinista (mulberry32)
 │   └── estado.js         Almacén, persistencia y transacciones
+│
+├── db/            esquema.sql — tablas, RLS y disparadores de Postgres
 │
 └── ui/            Interfaz (sin dependencias, gráficos SVG a mano)
     ├── app.js            Navegación y enrutado
     ├── componentes.js    Primitivas y gráficos
     ├── medios.js         Cámara, miniaturas e IndexedDB
-    └── vistas/           11 vistas
+    └── vistas/           12 vistas
 ```
 
 La separación **impacto ≠ puntos** es deliberada: el impacto es física y no debe contaminarse con reglas de juego; los puntos son una capa motivacional construida encima y sustituible.
@@ -132,7 +137,7 @@ subcarpeta de proyecto.
 
 ### GitHub Pages (configurado en este repositorio)
 
-El flujo de trabajo `.github/workflows/pages.yml` ejecuta las 134 pruebas,
+El flujo de trabajo `.github/workflows/pages.yml` ejecuta las 146 pruebas,
 comprueba que `dist/` no esté desfasado respecto a `src/` y publica. Para
 activarlo una sola vez:
 

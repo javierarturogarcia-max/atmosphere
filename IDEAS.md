@@ -27,7 +27,7 @@ La vista de aire ya calcula el AQI correctamente; solo le falta la fuente de dat
 - Misiones contextuales: *"Hoy el AQI está en 130. Deja el coche en casa: doble puntuación en movilidad."* Vincular el juego a una condición real del entorno es lo que separa una app de hábitos de una herramienta de salud pública.
 - Serie histórica local y correlación entre tus acciones y el aire de tu barrio.
 
-### 1.3 Grupos y competición por equipos
+### 1.3 Grupos y competición por equipos — ✅ IMPLEMENTADO
 
 La evidencia conductual es contundente: las **normas sociales descriptivas** ("el 72 % de tu edificio ya recicla") superan a cualquier incentivo individual. Implementar:
 
@@ -76,7 +76,7 @@ Integrar **iNaturalist** (biodiversidad), **GLOBE** (observaciones ambientales) 
 
 ## Nivel 3 — Escala e infraestructura
 
-### 3.1 Backend con privacidad diferencial
+### 3.1 Backend con privacidad diferencial — ⚙️ BASE IMPLEMENTADA (ver db/esquema.sql)
 
 Cuando haya cuentas, no replicar el modelo extractivo:
 

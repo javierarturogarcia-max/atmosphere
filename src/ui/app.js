@@ -13,6 +13,7 @@ import { vistaAnalitica } from './vistas/analitica.js';
 import { vistaHuella } from './vistas/huella.js';
 import { vistaAire } from './vistas/aire.js';
 import { vistaRanking } from './vistas/ranking.js';
+import { vistaNube } from './vistas/nube.js';
 import { vistaCiencia } from './vistas/ciencia.js';
 import { vistaPerfil } from './vistas/perfil.js';
 
@@ -27,6 +28,7 @@ const RUTAS = [
   { id: 'huella',    etiqueta: 'Huella',     icono: '🌍', vista: vistaHuella },
   { id: 'aire',      etiqueta: 'Aire',       icono: '💨', vista: vistaAire },
   { id: 'ranking',   etiqueta: 'Ranking',    icono: '🏆', vista: vistaRanking },
+  { id: 'nube',      etiqueta: 'Nube y grupos', icono: '☁️', vista: vistaNube },
   { separador: true },
   { id: 'ciencia',   etiqueta: 'Ciencia',    icono: '🔬', vista: vistaCiencia },
   { id: 'perfil',    etiqueta: 'Perfil',     icono: '⚙️', vista: vistaPerfil, movil: true },
