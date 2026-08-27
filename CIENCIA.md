@@ -136,6 +136,127 @@ Equivale a un +6 % de mortalidad por cada 10 µg/m³, coherente con Pope et al. 
 
 ---
 
+
+## 8bis. Datos reales de calidad del aire
+
+### Por qué Open-Meteo y no OpenAQ
+
+La elección obvia era OpenAQ, pero no sirve para este proyecto por dos razones
+verificadas, no supuestas:
+
+1. **Exige clave de API.** En un sitio estático la clave viaja al navegador y es
+   pública de todas formas, así que no protege nada y sí añade fricción.
+2. **No admite CORS.** El navegador no puede llamarla directamente; haría falta
+   un servidor intermediario, lo que rompe la arquitectura sin backend.
+
+Open-Meteo no pide clave, admite CORS y sirve los modelos **CAMS** (Copernicus,
+europeo) y **GEOS-CF** (NASA), con cobertura mundial por coordenadas en vez de
+solo donde hay estación oficial.
+
+### El AQI se calcula aquí, no se copia
+
+Open-Meteo publica su propio `us_aqi`, pero **no se usa como valor final**. Se
+toman las concentraciones crudas y se pasan por el motor de `aire.js`,
+contrastado contra los tramos publicados por la EPA. La API es una fuente de
+datos; la ciencia sigue siendo propia y auditable. Su `us_aqi` se conserva solo
+para poder contrastar ambos cálculos: en la verificación con datos de San
+Salvador, el índice propio dio **117** frente al **116** de la fuente. Esa
+coincidencia independiente es la mejor prueba de que la implementación es
+correcta.
+
+### La conversión de unidades que casi nadie hace
+
+Este es el error silencioso más común al integrar datos de calidad del aire:
+
+> Los tramos del AQI de la EPA están definidos en **ppb** para O₃, NO₂ y SO₂, y
+> en **ppm** para CO. Pero casi todas las fuentes —Open-Meteo, CAMS, la mayoría
+> de sensores— publican en **µg/m³**.
+
+Aplicar los tramos directamente sobre µg/m³ da un número plausible y
+completamente equivocado. La conversión usa el volumen molar del gas ideal a
+25 °C y 1013,25 hPa:
+
+```
+ppb = µg/m³ × 24,45 / masa molar
+```
+
+El efecto está medido en las pruebas del proyecto. Con las mismas lecturas
+(PM2,5 12; PM10 30; O₃ 100; NO₂ 40; SO₂ 10; CO 500 µg/m³):
+
+| | AQI | Dominante | Categoría |
+|---|---|---|---|
+| Sin convertir | **500** | CO | Peligrosa (emergencia sanitaria) |
+| Convertido | **56** | PM2,5 | Moderada |
+
+El mismo aire. Sin la conversión, el CO de 500 µg/m³ se lee como 500 ppm, que
+es una concentración letal.
+
+### El multiplicador por aire
+
+Cuando la calidad del aire está mal, las acciones de movilidad y energía
+puntúan más (×1,25 a ×2 según el tramo del AQI), durante 3 horas desde la
+lectura. No es un truco de juego: las emisiones evitadas durante un episodio de
+contaminación tienen un efecto sanitario **inmediato** sobre quienes están
+respirando ese aire, no solo un efecto climático difuso a décadas vista.
+
+Solo se aplica a movilidad y energía. Reciclar no limpia el aire de hoy, y
+fingir que sí sería exactamente el tipo de equivalencia falsa que este documento
+existe para evitar.
+
+## 8ter. Verificación con el dispositivo
+
+### Por qué no Google Fit ni Apple Health
+
+Ninguna de las dos es alcanzable desde una web estática, y conviene dejarlo por
+escrito porque es la petición más frecuente:
+
+| Plataforma | Estado |
+|---|---|
+| **Google Fit** | Cerró el registro de nuevas aplicaciones en mayo de 2024 y sus APIs se apagan a lo largo de 2026 |
+| **Health Connect** | Su sustituto, pero es nativo de Android: no tiene interfaz web |
+| **Apple HealthKit** | Nativo de iOS. Nunca ha tenido API web |
+| **Fitbit / Strava** | Sí tienen API web, pero exigen intercambiar un secreto de cliente en servidor: imposible sin backend |
+
+Construir sobre Google Fit hoy sería construir sobre algo que se apaga en meses.
+
+### Lo que sí funciona
+
+Dos fuentes, ambas sin cuentas ni servidores, y ambas producen distancia
+**medida por el dispositivo** en lugar de declarada por la persona:
+
+1. **GPS en vivo** con la Geolocation API del navegador.
+2. **Importación de trazas GPX/TCX**, que exporta prácticamente cualquier
+   aplicación deportiva, incluidas las que no ofrecen API. El archivo se
+   analiza en el navegador y no se envía a ningún sitio.
+
+### Cómo se valida una traza
+
+- Se descartan los puntos con incertidumbre horizontal superior a 60 m.
+- Se descartan los tramos que implican más de 200 km/h: son saltos del sensor,
+  y promediarlos contaminaría a la vez la distancia y la velocidad.
+- Se ignora la deriva por debajo de 0,5 km/h: estar parado no es un trayecto.
+- La distancia se acumula con la fórmula del haversine sobre la esfera media
+  WGS-84 (R = 6.371.008,8 m).
+
+### Inferencia del modo de transporte
+
+Se compara la **mediana** de las velocidades por tramo —no la media, que un
+semáforo o un pico de GPS distorsionan— contra un perfil por modo. Cuando los
+rangos se solapan, gana el modo cuya velocidad **típica** está más cerca, no el
+centro del rango: a 15 km/h ambos rangos encajan, pero eso es una bicicleta
+tranquila y una carrera de nivel casi profesional. Ese detalle salió de una
+prueba que fallaba, y corregirlo cambió el diagnóstico de «corriendo» a «en
+bicicleta».
+
+Cuando varios modos siguen encajando, se declara la ambigüedad con una
+confianza menor en vez de fingir certeza.
+
+Por último, se contrasta la traza contra lo que la persona quiere registrar: si
+el GPS mide 5 km y se declaran 40, o si el perfil de velocidad dice «vehículo»
+y la acción elegida es «bicicleta», la verificación se rechaza. Se tolera un
+15 % de diferencia, porque el GPS tiene error propio y las trazas urbanas se
+acortan bajo túneles y edificios altos.
+
 ## 9. Limitaciones que asumimos por escrito
 
 1. **Los factores son promedios.** Tu coche, tu red y tu supermercado concretos difieren. Las cifras son órdenes de magnitud correctos, no contabilidad.

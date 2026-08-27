@@ -2073,6 +2073,35 @@ function puntosOrientativos(accionId, cantidad, impacto) {
   return calcularPuntos({ accionId, cantidad, impacto, racha: 0, acumuladoCategoriaHoy: 0 }).puntos;
 }
 
+/**
+ * Multiplicador por calidad del aire real.
+ *
+ * Es la pieza que ata el juego al entorno: cuando el aire de tu ciudad esta
+ * mal, dejar el coche vale mas puntos, porque en ese momento vale mas de
+ * verdad. Las emisiones evitadas en un episodio de contaminacion tienen un
+ * efecto sanitario inmediato sobre las personas que estan respirando ese aire,
+ * no solo un efecto climatico difuso a decadas vista.
+ *
+ * Solo se aplica a movilidad y energia, que son las categorias que influyen
+ * sobre la contaminacion local. Reciclar no limpia el aire de hoy.
+ *
+ * @param {number} aqi indice de calidad del aire (escala EPA)
+ * @param {string} categoria categoria de la accion
+ */
+function factorAire(aqi, categoria) {
+  if (!Number.isFinite(aqi) || !['movilidad', 'energia'].includes(categoria)) {
+    return { factor: 1, etiqueta: '', nivel: null };
+  }
+  if (aqi > 200) return { factor: 2.0, etiqueta: 'Aire muy daniño: puntuacion doble', nivel: 'muy_danina' };
+  if (aqi > 150) return { factor: 1.75, etiqueta: 'Aire daniño: x1,75 en movilidad limpia', nivel: 'danina' };
+  if (aqi > 100) return { factor: 1.5, etiqueta: 'Aire daniño para sensibles: x1,5', nivel: 'sensibles' };
+  if (aqi > 50) return { factor: 1.25, etiqueta: 'Aire moderado: x1,25', nivel: 'moderada' };
+  return { factor: 1, etiqueta: '', nivel: 'buena' };
+}
+
+/** Antiguedad maxima de una lectura para que siga contando: 3 horas. */
+const VIGENCIA_AIRE_MS = 3 * 60 * 60 * 1000;
+
   __exp.PESOS = PESOS;
   __exp.K_SATURACION = K_SATURACION;
   __exp.TOPE_DIARIO = TOPE_DIARIO;
@@ -2083,6 +2112,8 @@ function puntosOrientativos(accionId, cantidad, impacto) {
   __exp.calcularPuntos = calcularPuntos;
   __exp.bonusDiversidad = bonusDiversidad;
   __exp.puntosOrientativos = puntosOrientativos;
+  __exp.factorAire = factorAire;
+  __exp.VIGENCIA_AIRE_MS = VIGENCIA_AIRE_MS;
 });
 
 __def("src/core/rachas.js", function (__exp, __req) {
@@ -3342,6 +3373,70 @@ function diasRestantes(mision, hoy = claveDia()) {
   return Math.max(0, diasEntre(hoy, mision.hasta.slice(0, 10)));
 }
 
+/**
+ * Misiones contextuales generadas por la calidad del aire real.
+ *
+ * A diferencia de las diarias, estas NO son deterministas por semilla: dependen
+ * de una condicion del mundo. Es justo lo que separa una app de habitos de una
+ * herramienta de salud publica: el reto aparece cuando de verdad hace falta.
+ *
+ * @param {number} aqi indice actual
+ * @param {string} lugar nombre legible de la ubicacion
+ * @param {string} dia clave YYYY-MM-DD
+ */
+function misionesPorAire(aqi, lugar = 'tu zona', dia = claveDia()) {
+  if (!Number.isFinite(aqi)) return [];
+  const ventana = { desde: `${dia}T00:00:00`, hasta: `${dia}T23:59:59` };
+  const base = { tipo: 'aire', dia, aqi, lugar };
+
+  if (aqi > 150) {
+    return [{
+      ...base, ...ventana,
+      id: `a|${dia}|emergencia`,
+      icono: '🚨',
+      titulo: `AQI ${Math.round(aqi)} en ${lugar}: hoy el coche se queda en casa`,
+      detalle: 'Con este nivel toda la poblacion nota efectos. Cada trayecto que no se hace en combustion cuenta doble hoy.',
+      objetivo: { tipo: 'categoria', ref: 'movilidad', cantidad: 2, unidad: 'acciones' },
+      recompensa: { puntos: 300, xp: 200 },
+      urgencia: 'alta',
+    }];
+  }
+  if (aqi > 100) {
+    return [{
+      ...base, ...ventana,
+      id: `a|${dia}|alerta`,
+      icono: '😷',
+      titulo: `AQI ${Math.round(aqi)} en ${lugar}: deja el coche hoy`,
+      detalle: 'Danino para grupos sensibles: ninos, mayores, asmaticos y personas con cardiopatia. Tu decision de movilidad afecta al aire que respiran.',
+      objetivo: { tipo: 'categoria', ref: 'movilidad', cantidad: 2, unidad: 'acciones' },
+      recompensa: { puntos: 200, xp: 140 },
+      urgencia: 'media',
+    }];
+  }
+  if (aqi > 50) {
+    return [{
+      ...base, ...ventana,
+      id: `a|${dia}|moderado`,
+      icono: '🌫️',
+      titulo: `AQI ${Math.round(aqi)} en ${lugar}: evita empeorarlo`,
+      detalle: 'Aire moderado. Es el punto en el que las decisiones individuales todavia marcan la diferencia entre quedarse aqui o empeorar.',
+      objetivo: { tipo: 'categoria', ref: 'movilidad', cantidad: 1, unidad: 'accion' },
+      recompensa: { puntos: 110, xp: 80 },
+      urgencia: 'baja',
+    }];
+  }
+  return [{
+    ...base, ...ventana,
+    id: `a|${dia}|limpio`,
+    icono: '🌤️',
+    titulo: `AQI ${Math.round(aqi)} en ${lugar}: aprovecha el aire limpio`,
+    detalle: 'Buena calidad del aire. Es el mejor dia para el ejercicio al aire libre, y para mantenerlo asi.',
+    objetivo: { tipo: 'accion', ref: 'mov_caminar', cantidad: 3, unidad: 'km' },
+    recompensa: { puntos: 90, xp: 70 },
+    urgencia: 'ninguna',
+  }];
+}
+
   __exp.claveSemana = claveSemana;
   __exp.claveMes = claveMes;
   __exp.misionesDiarias = misionesDiarias;
@@ -3350,6 +3445,7 @@ function diasRestantes(mision, hoy = claveDia()) {
   __exp.misionesVigentes = misionesVigentes;
   __exp.evaluarMision = evaluarMision;
   __exp.diasRestantes = diasRestantes;
+  __exp.misionesPorAire = misionesPorAire;
 });
 
 __def("src/core/estado.js", function (__exp, __req) {
@@ -3363,16 +3459,30 @@ __def("src/core/estado.js", function (__exp, __req) {
 const { accion, CATEGORIAS } = __req("src/data/acciones.js");
 const { recompensa, puedeCanjear } = __req("src/data/recompensas.js");
 const { calcularImpacto } = __req("src/core/impacto.js");
-const { calcularPuntos, bonusDiversidad } = __req("src/core/puntos.js");
+const { calcularPuntos, bonusDiversidad, factorAire, VIGENCIA_AIRE_MS } = __req("src/core/puntos.js");
 const { validarRegistro, NIVELES } = __req("src/core/validacion.js");
 const { claveDia, calcularRacha, congelacionesGanadas } = __req("src/core/rachas.js");
 const { detectarAscenso, nivelDesdeXP } = __req("src/core/nivel.js");
 const { construirResumen } = __req("src/core/analitica.js");
 const { evaluarLogros } = __req("src/core/logros.js");
-const { misionesVigentes, evaluarMision } = __req("src/core/misiones.js");
+const { misionesVigentes, evaluarMision, misionesPorAire } = __req("src/core/misiones.js");
 
 const VERSION_ESTADO = 1;
 const CLAVE = 'atmosphere.estado.v1';
+
+
+/**
+ * Devuelve la ultima lectura de aire solo si sigue siendo representativa.
+ * Una lectura de anteanoche no puede seguir dando multiplicador: la
+ * contaminacion cambia de hora en hora.
+ */
+function lecturaAireVigente(estado, fecha = new Date()) {
+  const l = estado?.aire?.ultimaLectura;
+  if (!l || !Number.isFinite(l.aqi) || !l.fecha) return null;
+  const edad = new Date(fecha).getTime() - new Date(l.fecha).getTime();
+  if (!Number.isFinite(edad) || edad < 0 || edad > VIGENCIA_AIRE_MS) return null;
+  return l;
+}
 
 function estadoInicial(nombre = 'Guardian', paisCod = 'WW') {
   return {
@@ -3499,7 +3609,11 @@ function crearAlmacen(inicial = null) {
       const racha = calcularRacha(dias, hoy, estado.perfil.congelaciones);
 
       // Misiones vigentes que esta accion puede empujar.
-      const misiones = misionesVigentes(estado.perfil.id, fecha, { nivel: nivelDesdeXP(estado.perfil.xp) });
+      const lecturaAire = lecturaAireVigente(estado, fecha);
+      const misiones = [
+        ...misionesVigentes(estado.perfil.id, fecha, { nivel: nivelDesdeXP(estado.perfil.xp) }),
+        ...(lecturaAire ? misionesPorAire(lecturaAire.aqi, lecturaAire.lugar, hoy) : []),
+      ];
       const contribuye = misiones.some((m) => {
         const o = m.objetivo;
         return (o.tipo === 'accion' && o.ref === accionId)
@@ -3511,6 +3625,7 @@ function crearAlmacen(inicial = null) {
       const catsHoy = new Set(delDia.map((r) => accion(r.accionId)?.cat).filter(Boolean));
       catsHoy.add(a.cat);
       const bonus = bonusDiversidad(catsHoy.size);
+      const aire = factorAire(lecturaAire?.aqi, a.cat);
 
       const { puntos, desglose } = calcularPuntos({
         accionId,
@@ -3519,7 +3634,7 @@ function crearAlmacen(inicial = null) {
         acumuladoCategoriaHoy: acumuladoCat,
         acumuladoDiaHoy: acumuladoDia,
         contribuyeMision: contribuye,
-        factorEvento: multActivo * bonus.factor,
+        factorEvento: multActivo * bonus.factor * aire.factor,
       });
 
       const registro = {
@@ -3586,6 +3701,7 @@ function crearAlmacen(inicial = null) {
         misionesCompletadas: completadas,
         congelacionesGanadas: ganadas,
         bonusDiversidad: bonus,
+        bonusAire: aire,
         racha: nuevaRacha,
       };
     },
@@ -3640,8 +3756,11 @@ function crearAlmacen(inicial = null) {
     },
 
     guardarLecturaAire(lectura) {
-      estado.aire.ultimaLectura = lectura;
-      estado.aire.historial = [...(estado.aire.historial || []), { ...lectura, fecha: new Date().toISOString() }].slice(-60);
+      // La marca de tiempo es imprescindible: el bonus por aire solo cuenta
+      // mientras la lectura siga siendo reciente (ver VIGENCIA_AIRE_MS).
+      const conFecha = { ...lectura, fecha: lectura.fecha || new Date().toISOString() };
+      estado.aire.ultimaLectura = conFecha;
+      estado.aire.historial = [...(estado.aire.historial || []), conFecha].slice(-120);
       notificar({ tipo: 'aire' });
     },
 
@@ -3677,6 +3796,7 @@ function crearAlmacen(inicial = null) {
 }
 
   __exp.VERSION_ESTADO = VERSION_ESTADO;
+  __exp.lecturaAireVigente = lecturaAireVigente;
   __exp.estadoInicial = estadoInicial;
   __exp.migrar = migrar;
   __exp.cargar = cargar;
@@ -4020,6 +4140,349 @@ function vistaPanel(ctx) {
   __exp.vistaPanel = vistaPanel;
 });
 
+__def("src/core/gps.js", function (__exp, __req) {
+/**
+ * gps.js — Verificacion de trayectos con datos del dispositivo.
+ *
+ * POR QUE NO GOOGLE FIT NI APPLE HEALTH: ninguna de las dos es alcanzable desde
+ * una web estatica. Las APIs de Google Fit cerraron el registro de nuevas
+ * aplicaciones en mayo de 2024 y se apagan a lo largo de 2026; su sustituto,
+ * Health Connect, es nativo de Android. HealthKit de Apple es nativo de iOS y
+ * nunca ha tenido interfaz web. Las que si tienen API web (Fitbit, Strava)
+ * exigen intercambiar un secreto de cliente en servidor, imposible en GitHub
+ * Pages sin backend.
+ *
+ * La alternativa que SI funciona hoy, en el navegador y sin cuentas ni
+ * servidores, son las dos fuentes que este modulo implementa:
+ *   1. GPS en vivo mediante la Geolocation API del propio navegador.
+ *   2. Importacion de trazas GPX/TCX exportadas desde cualquier app.
+ * Ambas producen distancia medida por el dispositivo, no declarada por la
+ * persona, que es exactamente el objetivo: convertir el autorreporte en dato.
+ */
+
+/** Radio medio de la Tierra en metros (WGS-84). */
+const RADIO_TIERRA = 6371008.8;
+
+/** Descarta puntos cuya incertidumbre horizontal supere esto (metros). */
+const PRECISION_MAXIMA = 60;
+
+/** Velocidad por encima de la cual el salto es error de GPS, no movimiento (km/h). */
+const VELOCIDAD_IMPOSIBLE = 200;
+
+/** Distancia del circulo maximo entre dos coordenadas, en metros. */
+function haversine(lat1, lon1, lat2, lon2) {
+  const rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad;
+  const dLon = (lon2 - lon1) * rad;
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * RADIO_TIERRA * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+
+/**
+ * Perfiles de velocidad por modo de transporte, en km/h.
+ * Se comparan contra la MEDIANA de las velocidades por tramo, no contra la
+ * media: un semaforo largo o un pico de GPS no deben cambiar el diagnostico.
+ */
+const PERFILES = Object.freeze([
+  { modo: 'mov_caminar', etiqueta: 'A pie', icono: '🚶', tipica: 4.8, minMediana: 1.5, maxMediana: 7.5, maxPico: 14 },
+  { modo: 'mov_correr', etiqueta: 'Corriendo', icono: '🏃', tipica: 10, minMediana: 7.5, maxMediana: 16, maxPico: 26 },
+  { modo: 'mov_bici', etiqueta: 'En bicicleta', icono: '🚲', tipica: 16, minMediana: 8, maxMediana: 32, maxPico: 60 },
+  { modo: 'mov_transporte', etiqueta: 'Vehiculo', icono: '🚗', tipica: 40, minMediana: 20, maxMediana: 130, maxPico: VELOCIDAD_IMPOSIBLE },
+]);
+
+/** Mediana sin dependencias (el modulo debe poder usarse aislado). */
+function mediana(xs) {
+  if (!xs.length) return 0;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+/**
+ * Analiza una traza de puntos y devuelve metricas verificables.
+ * @param {Array<{lat:number, lon:number, t:number|string, precision?:number}>} puntos
+ * @returns {{valida:boolean, motivo?:string, distanciaKm:number, duracionMin:number,
+ *            velocidadMedia:number, velocidadMediana:number, velocidadMaxima:number,
+ *            modo:object|null, puntosUsados:number, puntosDescartados:number}}
+ */
+function analizarTraza(puntos) {
+  const vacio = {
+    valida: false, distanciaKm: 0, duracionMin: 0, velocidadMedia: 0,
+    velocidadMediana: 0, velocidadMaxima: 0, modo: null,
+    puntosUsados: 0, puntosDescartados: 0,
+  };
+
+  const limpios = (puntos || [])
+    .map((p) => ({
+      lat: Number(p.lat), lon: Number(p.lon),
+      t: typeof p.t === 'number' ? p.t : new Date(p.t).getTime(),
+      precision: Number.isFinite(p.precision) ? p.precision : 0,
+    }))
+    .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon) && Number.isFinite(p.t)
+      && Math.abs(p.lat) <= 90 && Math.abs(p.lon) <= 180
+      && (p.precision === 0 || p.precision <= PRECISION_MAXIMA))
+    .sort((a, b) => a.t - b.t);
+
+  const descartadosPorFiltro = (puntos || []).length - limpios.length;
+
+  if (limpios.length < 2) {
+    return { ...vacio, motivo: 'La traza necesita al menos dos puntos validos.', puntosDescartados: descartadosPorFiltro };
+  }
+
+  let distancia = 0;
+  let saltos = 0;
+  const velocidades = [];
+
+  for (let i = 1; i < limpios.length; i++) {
+    const a = limpios[i - 1], b = limpios[i];
+    const dt = (b.t - a.t) / 1000; // segundos
+    const d = haversine(a.lat, a.lon, b.lat, b.lon);
+    if (dt <= 0) continue;
+
+    const kmh = (d / dt) * 3.6;
+    // Un salto imposible es error del sensor: se descarta el tramo entero,
+    // no se promedia. Promediarlo contaminaria distancia y velocidad a la vez.
+    if (kmh > VELOCIDAD_IMPOSIBLE) { saltos++; continue; }
+    // Ruido en parado: por debajo de 0,5 km/h el GPS deriva sin que nadie ande.
+    if (kmh < 0.5) continue;
+
+    distancia += d;
+    velocidades.push(kmh);
+  }
+
+  if (!velocidades.length) {
+    return { ...vacio, motivo: 'No se detecto movimiento real en la traza.', puntosDescartados: descartadosPorFiltro + saltos };
+  }
+
+  const duracionSeg = (limpios[limpios.length - 1].t - limpios[0].t) / 1000;
+  const distanciaKm = distancia / 1000;
+  const duracionMin = duracionSeg / 60;
+  const vMediana = mediana(velocidades);
+  const vMaxima = Math.max(...velocidades);
+  const vMedia = duracionSeg > 0 ? (distanciaKm / (duracionSeg / 3600)) : 0;
+
+  return {
+    valida: true,
+    distanciaKm: Math.round(distanciaKm * 1000) / 1000,
+    duracionMin: Math.round(duracionMin * 10) / 10,
+    velocidadMedia: Math.round(vMedia * 10) / 10,
+    velocidadMediana: Math.round(vMediana * 10) / 10,
+    velocidadMaxima: Math.round(vMaxima * 10) / 10,
+    modo: inferirModo(vMediana, vMaxima),
+    puntosUsados: limpios.length,
+    puntosDescartados: descartadosPorFiltro + saltos,
+  };
+}
+
+/**
+ * Deduce el modo de transporte del perfil de velocidades.
+ * Devuelve tambien una confianza, porque los rangos se solapan: 10 km/h puede
+ * ser una bici lenta o una carrera rapida, y fingir certeza seria deshonesto.
+ */
+function inferirModo(mediana_, maxima) {
+  const candidatos = PERFILES.filter(
+    (p) => mediana_ >= p.minMediana && mediana_ <= p.maxMediana && maxima <= p.maxPico
+  );
+  if (!candidatos.length) {
+    return { modo: null, etiqueta: 'No determinado', icono: '❓', confianza: 0,
+      nota: 'El perfil de velocidad no encaja con ningun modo conocido.' };
+  }
+  // Con solapamiento, gana el modo cuya velocidad TIPICA esta mas cerca, no el
+  // centro del rango: el centro es un artefacto de donde se trazaron los limites.
+  // A 15 km/h ambos rangos encajan, pero eso es una bici tranquila y una carrera
+  // de nivel casi profesional; la velocidad tipica recoge esa asimetria real.
+  const elegido = candidatos.reduce((mejor, p) =>
+    Math.abs(mediana_ - p.tipica) < Math.abs(mediana_ - mejor.tipica) ? p : mejor);
+  const confianza = candidatos.length === 1 ? 0.9 : Math.round((1 / candidatos.length) * 100) / 100;
+  return {
+    modo: elegido.modo,
+    etiqueta: elegido.etiqueta,
+    icono: elegido.icono,
+    confianza,
+    nota: candidatos.length > 1
+      ? `Compatible tambien con: ${candidatos.filter((c) => c !== elegido).map((c) => c.etiqueta).join(', ')}.`
+      : '',
+  };
+}
+
+/**
+ * Seguimiento en vivo. Devuelve un controlador con detener() y estado actual.
+ * No hace nada por su cuenta: quien llama decide cuando parar y que registrar.
+ */
+function iniciarSeguimiento({ alActualizar = () => {} } = {}) {
+  if (typeof navigator === 'undefined' || !navigator.geolocation) {
+    throw new Error('Este navegador no ofrece geolocalizacion.');
+  }
+  const puntos = [];
+  let error = null;
+
+  const id = navigator.geolocation.watchPosition(
+    (pos) => {
+      puntos.push({
+        lat: pos.coords.latitude,
+        lon: pos.coords.longitude,
+        t: pos.timestamp,
+        precision: pos.coords.accuracy,
+      });
+      alActualizar(analizarTraza(puntos), puntos.length);
+    },
+    (err) => {
+      error = err.code === 1
+        ? 'Permiso de ubicacion denegado.'
+        : 'No se pudo seguir la posicion.';
+      alActualizar(analizarTraza(puntos), puntos.length, error);
+    },
+    { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+  );
+
+  return {
+    detener() {
+      navigator.geolocation.clearWatch(id);
+      return { resumen: analizarTraza(puntos), puntos, error };
+    },
+    puntos,
+  };
+}
+
+/**
+ * Coherencia entre lo que la traza mide y lo que la persona quiere registrar.
+ * Es el nucleo de la verificacion: no basta con tener GPS, hay que comprobar
+ * que el GPS respalda ESA accion y ESA cantidad.
+ */
+function verificarContra(resumen, accionId, cantidadDeclarada) {
+  if (!resumen?.valida) {
+    return { verificado: false, motivo: resumen?.motivo || 'Traza no valida.', cantidadSugerida: null };
+  }
+  const medida = resumen.distanciaKm;
+  const declarada = Number(cantidadDeclarada);
+
+  if (resumen.modo?.modo && resumen.modo.modo !== accionId && resumen.modo.confianza >= 0.9) {
+    return {
+      verificado: false,
+      motivo: `La traza parece "${resumen.modo.etiqueta}" (mediana ${resumen.velocidadMediana} km/h), no la accion elegida.`,
+      cantidadSugerida: medida,
+    };
+  }
+  if (!Number.isFinite(declarada) || declarada <= 0) {
+    return { verificado: true, motivo: '', cantidadSugerida: medida };
+  }
+  // Se tolera un 15 % de diferencia: el GPS tiene error propio y las trazas
+  // urbanas se acortan bajo tuneles y edificios altos.
+  const desvio = Math.abs(declarada - medida) / Math.max(medida, 0.001);
+  if (desvio > 0.15) {
+    return {
+      verificado: false,
+      motivo: `Has declarado ${declarada} km pero el GPS midio ${medida.toFixed(2)} km.`,
+      cantidadSugerida: medida,
+    };
+  }
+  return { verificado: true, motivo: '', cantidadSugerida: medida };
+}
+
+  __exp.haversine = haversine;
+  __exp.PERFILES = PERFILES;
+  __exp.analizarTraza = analizarTraza;
+  __exp.inferirModo = inferirModo;
+  __exp.iniciarSeguimiento = iniciarSeguimiento;
+  __exp.verificarContra = verificarContra;
+});
+
+__def("src/core/gpx.js", function (__exp, __req) {
+/**
+ * gpx.js — Lectura de trazas exportadas desde cualquier aplicacion.
+ *
+ * Es la via de verificacion que funciona con TODOS los ecosistemas, incluidos
+ * los que no ofrecen API web: Strava, Garmin, Komoot, Apple Salud y Google Fit
+ * exportan GPX o TCX. La persona descarga su archivo y lo suelta aqui; el
+ * analisis ocurre entero en el navegador y el archivo no sale del dispositivo.
+ *
+ * Se analiza con expresiones regulares en vez de DOMParser a proposito: asi el
+ * modulo es puro, funciona igual en Node y en el navegador, y se puede probar
+ * sin simular un DOM.
+ */
+
+/** Extrae los puntos de una traza GPX. */
+function parsearGPX(texto) {
+  const xml = String(texto || '');
+  const puntos = [];
+
+  // <trkpt lat="..." lon="..."> ... </trkpt>  (tambien <rtept> y <wpt>)
+  const re = /<(?:trkpt|rtept|wpt)\b[^>]*?\blat\s*=\s*"([-\d.]+)"[^>]*?\blon\s*=\s*"([-\d.]+)"[^>]*?(?:\/>|>([\s\S]*?)<\/(?:trkpt|rtept|wpt)>)/gi;
+  let m;
+  while ((m = re.exec(xml)) !== null) {
+    const lat = parseFloat(m[1]);
+    const lon = parseFloat(m[2]);
+    const cuerpo = m[3] || '';
+    const tiempo = cuerpo.match(/<time>([^<]+)<\/time>/i);
+    puntos.push({
+      lat,
+      lon,
+      t: tiempo ? new Date(tiempo[1]).getTime() : NaN,
+      precision: 0,
+    });
+  }
+  return puntos;
+}
+
+/** Extrae los puntos de un archivo TCX (Garmin). */
+function parsearTCX(texto) {
+  const xml = String(texto || '');
+  const puntos = [];
+  const re = /<Trackpoint>([\s\S]*?)<\/Trackpoint>/gi;
+  let m;
+  while ((m = re.exec(xml)) !== null) {
+    const b = m[1];
+    const lat = b.match(/<LatitudeDegrees>([-\d.]+)<\/LatitudeDegrees>/i);
+    const lon = b.match(/<LongitudeDegrees>([-\d.]+)<\/LongitudeDegrees>/i);
+    const t = b.match(/<Time>([^<]+)<\/Time>/i);
+    if (lat && lon) {
+      puntos.push({
+        lat: parseFloat(lat[1]),
+        lon: parseFloat(lon[1]),
+        t: t ? new Date(t[1]).getTime() : NaN,
+        precision: 0,
+      });
+    }
+  }
+  return puntos;
+}
+
+/** Detecta el formato y devuelve los puntos, sea cual sea. */
+function parsearTraza(texto, nombreArchivo = '') {
+  const t = String(texto || '');
+  const esTCX = /<TrainingCenterDatabase|<Trackpoint>/i.test(t) || /\.tcx$/i.test(nombreArchivo);
+  const puntos = esTCX ? parsearTCX(t) : parsearGPX(t);
+  return {
+    formato: esTCX ? 'TCX' : 'GPX',
+    puntos,
+    conTiempo: puntos.filter((p) => Number.isFinite(p.t)).length,
+    total: puntos.length,
+  };
+}
+
+/**
+ * Metadatos utiles del archivo: nombre de la actividad y fecha.
+ * Sirven para que el registro conserve de donde salio la prueba.
+ */
+function metadatosTraza(texto) {
+  const xml = String(texto || '');
+  const nombre = xml.match(/<name>([^<]+)<\/name>/i);
+  const primeraFecha = xml.match(/<time>([^<]+)<\/time>/i);
+  const creador = xml.match(/\bcreator\s*=\s*"([^"]+)"/i);
+  return {
+    nombre: nombre ? nombre[1].trim() : null,
+    fecha: primeraFecha ? primeraFecha[1] : null,
+    aplicacion: creador ? creador[1] : null,
+  };
+}
+
+  __exp.parsearGPX = parsearGPX;
+  __exp.parsearTCX = parsearTCX;
+  __exp.parsearTraza = parsearTraza;
+  __exp.metadatosTraza = metadatosTraza;
+});
+
 __def("src/ui/vistas/registrar.js", function (__exp, __req) {
 /** registrar.js — Catalogo de acciones y formulario de registro. */
 const { el, num, co2, toast, modal, esc, vacio } = __req("src/ui/componentes.js");
@@ -4028,6 +4491,8 @@ const { calcularImpacto } = __req("src/core/impacto.js");
 const { calcularPuntos } = __req("src/core/puntos.js");
 const { validarRegistro, NIVELES } = __req("src/core/validacion.js");
 const { claveDia } = __req("src/core/rachas.js");
+const { iniciarSeguimiento, analizarTraza, verificarContra } = __req("src/core/gps.js");
+const { parsearTraza, metadatosTraza } = __req("src/core/gpx.js");
 
 let filtroCat = 'todas';
 let busqueda = '';
@@ -4167,6 +4632,19 @@ function abrirFormulario(a, ctx) {
   deslizador.addEventListener('input', () => { campo.value = deslizador.value; actualizar(deslizador.value); });
   actualizar(inicial);
 
+  // Prueba aportada por el dispositivo, si la hay.
+  let prueba = null;
+  const aplicarMedida = (km, detalle) => {
+    const v = Math.max(0.01, Math.round(km * 100) / 100);
+    campo.value = String(v);
+    deslizador.value = String(Math.min(Number(deslizador.max), v));
+    prueba = detalle;
+    actualizar(v);
+  };
+  const bloqueGPS = a.cat === 'movilidad' && a.unidad === 'km'
+    ? construirVerificacion(a, aplicarMedida)
+    : null;
+
   const contenido = el('div', {}, [
     el('div', { clase: 'fila', estilo: 'margin-bottom:15px' }, [
       el('span', { estilo: 'font-size:33px', texto: a.icono }),
@@ -4188,13 +4666,16 @@ function abrirFormulario(a, ctx) {
           ? el('label', { clase: 'fila', estilo: 'gap:7px;font-size:13px;color:var(--texto-2);cursor:pointer' },
             [evidencia, `Tengo evidencia (${a.evidencia}) — sube el indice de confianza`])
           : null,
+        bloqueGPS,
         previa,
         el('button', {
           clase: 'btn primario bloque',
           texto: 'Registrar',
           onclick: () => {
             const res = ctx.almacen.registrar(a.id, Number(campo.value), {
-              nota: nota.value, evidencia: evidencia.checked ? a.evidencia : null,
+              nota: [nota.value, prueba?.resumen].filter(Boolean).join(' · '),
+              evidencia: prueba ? 'gps' : (evidencia.checked ? a.evidencia : null),
+              prueba: prueba || null,
             });
             if (!res.ok) {
               toast({ titulo: 'No se pudo registrar', texto: res.mensajes.join(' '), tipo: 'error', icono: '⛔' });
@@ -4240,20 +4721,144 @@ function celebrar(res, a) {
   }
 }
 
+
+/**
+ * Bloque de verificacion con datos del dispositivo.
+ *
+ * Convierte el autorreporte en medicion: o el GPS del navegador sigue el
+ * trayecto en vivo, o la persona suelta una traza exportada desde la app que
+ * ya use. En ambos casos la distancia la mide el dispositivo, no la teclea
+ * quien registra, y el resultado se contrasta contra la accion elegida.
+ */
+function construirVerificacion(a, aplicarMedida) {
+  const salida = el('div', { clase: 'tarjeta', estilo: 'margin-top:13px' });
+  let seguimiento = null;
+
+  const pintar = (estado = {}) => {
+    salida.innerHTML = '';
+    salida.appendChild(el('div', { clase: 'etiqueta', texto: 'Verificacion con tu dispositivo' }));
+
+    if (seguimiento) {
+      const r = estado.resumen || {};
+      salida.appendChild(el('div', { estilo: 'margin:11px 0' }, [
+        el('div', { clase: 'fila entre' }, [
+          el('span', { clase: 'metrica-valor s pulso', texto: `${num(r.distanciaKm || 0, 2)} km` }),
+          el('span', { clase: 'mini', texto: `${estado.puntos || 0} puntos GPS` }),
+        ]),
+        el('div', { clase: 'mini', estilo: 'margin-top:5px',
+          texto: r.velocidadMediana
+            ? `${num(r.velocidadMediana, 1)} km/h de mediana · ${r.modo?.etiqueta || 'analizando'}`
+            : 'Buscando senal... manten esta pantalla abierta.' }),
+      ]));
+      salida.appendChild(el('button', {
+        clase: 'btn bloque', texto: '⏹️ Detener y usar esta medicion',
+        onclick: () => {
+          const { resumen } = seguimiento.detener();
+          seguimiento = null;
+          if (!resumen.valida) { pintar({ error: resumen.motivo }); return; }
+          const v = verificarContra(resumen, a.id, null);
+          aplicarMedida(resumen.distanciaKm, {
+            via: 'gps-vivo',
+            resumen: `GPS: ${num(resumen.distanciaKm, 2)} km en ${num(resumen.duracionMin, 0)} min`,
+            modo: resumen.modo?.etiqueta,
+            confianza: resumen.modo?.confianza ?? 0,
+          });
+          pintar({ hecho: resumen, aviso: v.verificado ? '' : v.motivo });
+        },
+      }));
+      return;
+    }
+
+    if (estado.hecho) {
+      const r = estado.hecho;
+      salida.appendChild(el('div', { clase: 'aviso exito', estilo: 'margin:11px 0' }, [
+        el('span', { texto: '✅' }),
+        el('div', {}, [
+          el('strong', { texto: `${num(r.distanciaKm, 2)} km medidos por el dispositivo` }),
+          el('div', { clase: 'mini', estilo: 'margin-top:3px;color:inherit;opacity:.85',
+            texto: `${num(r.velocidadMediana, 1)} km/h de mediana · ${r.modo?.etiqueta || '—'}${
+              r.modo?.confianza ? ` (confianza ${Math.round(r.modo.confianza * 100)} %)` : ''}${
+              r.puntosDescartados ? ` · ${r.puntosDescartados} puntos descartados por ruido` : ''}` }),
+        ]),
+      ]));
+      if (estado.aviso) {
+        salida.appendChild(el('div', { clase: 'aviso alerta', estilo: 'margin-bottom:11px' }, ['⚠️ ' + estado.aviso]));
+      }
+    }
+
+    if (estado.error) {
+      salida.appendChild(el('div', { clase: 'aviso error', estilo: 'margin:11px 0' }, ['⚠️ ' + estado.error]));
+    }
+
+    salida.appendChild(el('div', { clase: 'fila envuelve', estilo: 'gap:7px;margin-top:11px' }, [
+      el('button', {
+        clase: 'btn s', texto: '📍 Seguir con GPS',
+        onclick: () => {
+          try {
+            seguimiento = iniciarSeguimiento({
+              alActualizar: (resumen, puntos, err) => pintar(err ? { error: err } : { resumen, puntos }),
+            });
+            pintar({ resumen: {}, puntos: 0 });
+          } catch (e) { pintar({ error: e.message }); }
+        },
+      }),
+      (() => {
+        const archivo = el('input', { type: 'file', accept: '.gpx,.tcx,application/gpx+xml,text/xml', estilo: 'display:none' });
+        archivo.addEventListener('change', async () => {
+          const f = archivo.files?.[0];
+          if (!f) return;
+          try {
+            const texto = await f.text();
+            const { puntos, formato, conTiempo, total } = parsearTraza(texto, f.name);
+            if (!total) { pintar({ error: 'El archivo no contiene puntos de traza legibles.' }); return; }
+            if (!conTiempo) { pintar({ error: `Se leyeron ${total} puntos ${formato}, pero ninguno trae hora: sin tiempos no se puede calcular velocidad ni verificar el modo.` }); return; }
+            const resumen = analizarTraza(puntos);
+            if (!resumen.valida) { pintar({ error: resumen.motivo }); return; }
+            const meta = metadatosTraza(texto);
+            const v = verificarContra(resumen, a.id, null);
+            aplicarMedida(resumen.distanciaKm, {
+              via: `archivo-${formato.toLowerCase()}`,
+              resumen: `${formato}${meta.aplicacion ? ` de ${meta.aplicacion}` : ''}: ${num(resumen.distanciaKm, 2)} km`,
+              modo: resumen.modo?.etiqueta,
+              confianza: resumen.modo?.confianza ?? 0,
+            });
+            pintar({ hecho: resumen, aviso: v.verificado ? '' : v.motivo });
+          } catch (e) {
+            pintar({ error: 'No se pudo leer el archivo.' });
+          }
+        });
+        const boton = el('button', { clase: 'btn s', texto: '📂 Importar GPX / TCX', onclick: () => archivo.click() });
+        return el('span', {}, [boton, archivo]);
+      })(),
+    ]));
+
+    salida.appendChild(el('div', { clase: 'mini', estilo: 'margin-top:9px' },
+      ['Exporta la actividad desde Strava, Garmin, Komoot o Apple Salud y sueltala aqui. El archivo se analiza en tu navegador y no se envia a ningun sitio.']));
+  };
+
+  pintar();
+  return salida;
+}
+
   __exp.vistaRegistrar = vistaRegistrar;
 });
 
 __def("src/ui/vistas/misiones.js", function (__exp, __req) {
 /** misiones.js — Retos diarios, semanales y de temporada. */
 const { el, num, progreso, vacio, tarjetaMetrica } = __req("src/ui/componentes.js");
-const { misionesVigentes, evaluarMision, diasRestantes } = __req("src/core/misiones.js");
+const { misionesVigentes, evaluarMision, diasRestantes, misionesPorAire } = __req("src/core/misiones.js");
+const { lecturaAireVigente } = __req("src/core/estado.js");
 const { progresion } = __req("src/core/nivel.js");
 
 function vistaMisiones(ctx) {
   const estado = ctx.almacen.get();
   const nivel = progresion(estado.perfil.xp).nivel;
-  const todas = misionesVigentes(estado.perfil.id, new Date(), { nivel })
-    .map((m) => ({ m, ev: evaluarMision(m, estado.registros) }));
+  // Las contextuales de aire solo existen mientras la lectura siga vigente.
+  const aire = lecturaAireVigente(estado);
+  const todas = [
+    ...misionesVigentes(estado.perfil.id, new Date(), { nivel }),
+    ...(aire ? misionesPorAire(aire.aqi, aire.lugar) : []),
+  ].map((m) => ({ m, ev: evaluarMision(m, estado.registros) }));
   const completadas = estado.misionesCompletadas || [];
   const hechasIds = new Set(completadas.map((c) => c.id));
 
@@ -4273,6 +4878,7 @@ function vistaMisiones(ctx) {
   ]));
 
   for (const [tipo, titulo, desc] of [
+    ['aire', 'Segun el aire de hoy', 'Aparecen solo cuando la calidad del aire lo justifica'],
     ['diaria', 'Diarias', 'Se renuevan cada dia a medianoche'],
     ['semanal', 'Semanales', 'Ventana de lunes a domingo'],
     ['temporada', 'Reto del mes', 'El objetivo mas ambicioso'],
@@ -5260,6 +5866,59 @@ const CONTAMINANTES = Object.freeze({
   co:   { nombre: 'CO',    unidad: 'ppm', origen: 'Combustion incompleta: motores, braseros, calentadores mal ventilados.' },
 });
 
+// ============================================================ conversion de unidades
+
+/**
+ * Volumen molar de un gas ideal a 25 C y 1013,25 hPa, en L/mol.
+ * Es la constante que usa la EPA para convertir entre masa y volumen.
+ */
+const VOLUMEN_MOLAR = 24.45;
+
+/** Masas moleculares en g/mol de los gases con tramos de AQI. */
+const MASA_MOLAR = Object.freeze({
+  o3: 48.00,
+  no2: 46.0055,
+  so2: 64.066,
+  co: 28.010,
+});
+
+/**
+ * Convierte una concentracion de ug/m3 a ppb.
+ *
+ * IMPRESCINDIBLE: los tramos del AQI de la EPA estan definidos en ppb para O3,
+ * NO2 y SO2, y en ppm para CO, pero casi todas las fuentes de datos (Open-Meteo,
+ * CAMS, la mayoria de sensores) publican en ug/m3. Aplicar los tramos
+ * directamente sobre ug/m3 es un error silencioso: da un AQI plausible pero
+ * equivocado, casi siempre por exceso.
+ */
+function ugm3ApPpb(valor, contaminante) {
+  const mw = MASA_MOLAR[contaminante];
+  if (!mw || !Number.isFinite(valor)) return null;
+  return (valor * VOLUMEN_MOLAR) / mw;
+}
+
+/** Conversion inversa: de ppb a ug/m3. */
+function ppbAUgm3(valor, contaminante) {
+  const mw = MASA_MOLAR[contaminante];
+  if (!mw || !Number.isFinite(valor)) return null;
+  return (valor * mw) / VOLUMEN_MOLAR;
+}
+
+/**
+ * Normaliza un juego de lecturas en ug/m3 a las unidades que espera calcularAQI:
+ * PM en ug/m3 (sin tocar), O3/NO2/SO2 en ppb y CO en ppm.
+ */
+function normalizarDesdeUgm3(lecturas) {
+  const salida = {};
+  if (Number.isFinite(lecturas.pm25)) salida.pm25 = lecturas.pm25;
+  if (Number.isFinite(lecturas.pm10)) salida.pm10 = lecturas.pm10;
+  for (const gas of ['o3', 'no2', 'so2']) {
+    if (Number.isFinite(lecturas[gas])) salida[gas] = ugm3ApPpb(lecturas[gas], gas);
+  }
+  if (Number.isFinite(lecturas.co)) salida.co = ugm3ApPpb(lecturas.co, 'co') / 1000; // ppb -> ppm
+  return salida;
+}
+
   __exp.TRAMOS = TRAMOS;
   __exp.CATEGORIAS_AQI = CATEGORIAS_AQI;
   __exp.GUIA_OMS = GUIA_OMS;
@@ -5269,14 +5928,210 @@ const CONTAMINANTES = Object.freeze({
   __exp.excesosOMS = excesosOMS;
   __exp.riesgoPM25 = riesgoPM25;
   __exp.CONTAMINANTES = CONTAMINANTES;
+  __exp.VOLUMEN_MOLAR = VOLUMEN_MOLAR;
+  __exp.MASA_MOLAR = MASA_MOLAR;
+  __exp.ugm3ApPpb = ugm3ApPpb;
+  __exp.ppbAUgm3 = ppbAUgm3;
+  __exp.normalizarDesdeUgm3 = normalizarDesdeUgm3;
+});
+
+__def("src/core/openmeteo.js", function (__exp, __req) {
+/**
+ * openmeteo.js — Fuente de datos reales de calidad del aire.
+ *
+ * Se usa Open-Meteo (modelos CAMS de Copernicus y GEOS-CF de la NASA) por tres
+ * razones concretas, no por costumbre:
+ *   - No exige clave de API. Una clave en un sitio estatico es publica igualmente.
+ *   - Permite CORS, asi que el navegador puede llamarla directamente. OpenAQ,
+ *     la alternativa obvia, NO lo permite y obligaria a montar un servidor.
+ *   - Cobertura mundial por coordenadas, no solo donde hay estacion oficial.
+ *
+ * DECISION DE DISENO: la API devuelve su propio `us_aqi`, pero NO se usa como
+ * valor final. Se toman las concentraciones crudas y se pasan por el motor de
+ * aire.js, que esta contrastado contra los tramos publicados por la EPA. La API
+ * es una fuente de datos; la ciencia sigue siendo nuestra y verificable. Su
+ * us_aqi se conserva solo para poder contrastar ambos calculos.
+ */
+const { calcularAQI, normalizarDesdeUgm3 } = __req("src/core/aire.js");
+
+const BASE = 'https://air-quality-api.open-meteo.com/v1/air-quality';
+const GEO = 'https://geocoding-api.open-meteo.com/v1/search';
+
+/** Variables solicitadas. Open-Meteo las devuelve todas en ug/m3. */
+const VARIABLES = [
+  'pm10', 'pm2_5', 'carbon_monoxide', 'nitrogen_dioxide', 'sulphur_dioxide', 'ozone', 'us_aqi',
+];
+
+/** Correspondencia entre los nombres de Open-Meteo y los nuestros. */
+const MAPA = Object.freeze({
+  pm2_5: 'pm25',
+  pm10: 'pm10',
+  ozone: 'o3',
+  nitrogen_dioxide: 'no2',
+  sulphur_dioxide: 'so2',
+  carbon_monoxide: 'co',
+});
+
+/** Vigencia de la cache: los modelos se actualizan cada hora. */
+const CACHE_MS = 15 * 60 * 1000;
+const cache = new Map();
+
+class ErrorAire extends Error {
+  constructor(mensaje, codigo) { super(mensaje); this.codigo = codigo; }
+}
+
+async function pedirJSON(url, { timeoutMs = 12000 } = {}) {
+  const control = new AbortController();
+  const temporizador = setTimeout(() => control.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: control.signal, headers: { Accept: 'application/json' } });
+    if (!res.ok) {
+      throw new ErrorAire(`El servicio respondio ${res.status}.`, res.status === 429 ? 'limite' : 'http');
+    }
+    const datos = await res.json();
+    // Open-Meteo senala los errores con {error: true, reason: "..."}
+    if (datos && datos.error) throw new ErrorAire(datos.reason || 'Peticion rechazada.', 'api');
+    return datos;
+  } catch (e) {
+    if (e.name === 'AbortError') throw new ErrorAire('El servicio tardo demasiado en responder.', 'timeout');
+    if (e instanceof ErrorAire) throw e;
+    throw new ErrorAire('No se pudo conectar con el servicio de calidad del aire.', 'red');
+  } finally {
+    clearTimeout(temporizador);
+  }
+}
+
+/**
+ * Consulta la calidad del aire de unas coordenadas.
+ * @param {number} lat
+ * @param {number} lon
+ * @returns {Promise<{aqi:object, lecturas:object, crudas:object, meta:object}>}
+ */
+async function consultarAire(lat, lon, { forzar = false } = {}) {
+  const la = Number(lat), lo = Number(lon);
+  if (!Number.isFinite(la) || !Number.isFinite(lo) || Math.abs(la) > 90 || Math.abs(lo) > 180) {
+    throw new ErrorAire('Coordenadas no validas.', 'entrada');
+  }
+
+  const clave = `${la.toFixed(3)},${lo.toFixed(3)}`;
+  const guardado = cache.get(clave);
+  if (!forzar && guardado && Date.now() - guardado.momento < CACHE_MS) return guardado.datos;
+
+  const url = `${BASE}?latitude=${la}&longitude=${lo}&current=${VARIABLES.join(',')}&timezone=auto`;
+  const datos = await pedirJSON(url);
+
+  const actual = datos.current;
+  if (!actual || typeof actual !== 'object') {
+    throw new ErrorAire('La respuesta no trae mediciones actuales.', 'formato');
+  }
+
+  // Concentraciones crudas en ug/m3, tal cual las publica la fuente.
+  const crudas = {};
+  for (const [origen, propio] of Object.entries(MAPA)) {
+    const v = actual[origen];
+    if (Number.isFinite(v)) crudas[propio] = v;
+  }
+  if (!Object.keys(crudas).length) {
+    throw new ErrorAire('No hay datos de contaminantes para esta ubicacion.', 'sin_datos');
+  }
+
+  // Conversion a las unidades de los tramos de la EPA y calculo con nuestro motor.
+  const lecturas = normalizarDesdeUgm3(crudas);
+  const aqi = calcularAQI(lecturas);
+  if (!aqi) throw new ErrorAire('No se pudo calcular el indice con los datos recibidos.', 'calculo');
+
+  const resultado = {
+    aqi,
+    lecturas,
+    crudas,
+    meta: {
+      lat: datos.latitude ?? la,
+      lon: datos.longitude ?? lo,
+      zona: datos.timezone || null,
+      medidoEn: actual.time || null,
+      elevacion: datos.elevation ?? null,
+      aqiDeLaFuente: Number.isFinite(actual.us_aqi) ? actual.us_aqi : null,
+      fuente: 'Open-Meteo (CAMS / GEOS-CF)',
+      consultadoEn: new Date().toISOString(),
+    },
+  };
+
+  cache.set(clave, { momento: Date.now(), datos: resultado });
+  return resultado;
+}
+
+/** Pide la posicion del navegador. Requiere HTTPS y permiso del usuario. */
+function ubicacionActual({ timeoutMs = 12000 } = {}) {
+  return new Promise((resolve, reject) => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      reject(new ErrorAire('Este navegador no ofrece geolocalizacion.', 'no_soportado'));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude, precision: pos.coords.accuracy }),
+      (err) => {
+        const motivos = {
+          1: 'Has denegado el permiso de ubicacion. Puedes buscar tu ciudad a mano.',
+          2: 'No se pudo determinar tu posicion.',
+          3: 'La localizacion tardo demasiado.',
+        };
+        reject(new ErrorAire(motivos[err.code] || 'No se pudo obtener la ubicacion.', 'geo'));
+      },
+      { enableHighAccuracy: false, timeout: timeoutMs, maximumAge: 300000 }
+    );
+  });
+}
+
+/** Busca ciudades por nombre (geocodificacion de Open-Meteo, tambien sin clave). */
+async function buscarCiudad(nombre) {
+  const q = String(nombre || '').trim();
+  if (q.length < 2) return [];
+  const url = `${GEO}?name=${encodeURIComponent(q)}&count=8&language=es&format=json`;
+  const datos = await pedirJSON(url);
+  return (datos.results || []).map((r) => ({
+    nombre: r.name,
+    region: [r.admin1, r.country].filter(Boolean).join(', '),
+    lat: r.latitude,
+    lon: r.longitude,
+    pais: r.country_code,
+  }));
+}
+
+/** Ciudades de arranque rapido, con peso en Iberoamerica. */
+const CIUDADES = Object.freeze([
+  { nombre: 'San Salvador', region: 'El Salvador', lat: 13.6929, lon: -89.2182, pais: 'SV' },
+  { nombre: 'Guatemala', region: 'Guatemala', lat: 14.6349, lon: -90.5069, pais: 'GT' },
+  { nombre: 'Tegucigalpa', region: 'Honduras', lat: 14.0723, lon: -87.1921, pais: 'HN' },
+  { nombre: 'San Jose', region: 'Costa Rica', lat: 9.9281, lon: -84.0907, pais: 'CR' },
+  { nombre: 'Ciudad de Mexico', region: 'Mexico', lat: 19.4326, lon: -99.1332, pais: 'MX' },
+  { nombre: 'Bogota', region: 'Colombia', lat: 4.7110, lon: -74.0721, pais: 'CO' },
+  { nombre: 'Lima', region: 'Peru', lat: -12.0464, lon: -77.0428, pais: 'PE' },
+  { nombre: 'Santiago', region: 'Chile', lat: -33.4489, lon: -70.6693, pais: 'CL' },
+  { nombre: 'Buenos Aires', region: 'Argentina', lat: -34.6037, lon: -58.3816, pais: 'AR' },
+  { nombre: 'Sao Paulo', region: 'Brasil', lat: -23.5505, lon: -46.6333, pais: 'BR' },
+  { nombre: 'Madrid', region: 'Espana', lat: 40.4168, lon: -3.7038, pais: 'ES' },
+  { nombre: 'Nueva Delhi', region: 'India', lat: 28.6139, lon: 77.2090, pais: 'IN' },
+]);
+
+
+  __exp.consultarAire = consultarAire;
+  __exp.ubicacionActual = ubicacionActual;
+  __exp.buscarCiudad = buscarCiudad;
+  __exp.CIUDADES = CIUDADES;
+  __exp.ErrorAire = ErrorAire;
 });
 
 __def("src/ui/vistas/aire.js", function (__exp, __req) {
 /** aire.js — Calculadora de calidad del aire y riesgo sanitario. */
-const { el, num, medidor, tarjetaMetrica, graficoBarras, toast, esc } = __req("src/ui/componentes.js");
+const { el, num, medidor, tarjetaMetrica, graficoBarras, toast, esc, progreso, vacio } = __req("src/ui/componentes.js");
 const { calcularAQI, riesgoPM25, CONTAMINANTES, CATEGORIAS_AQI, GUIA_OMS, aqiContaminante } = __req("src/core/aire.js");
+const { consultarAire, ubicacionActual, buscarCiudad, CIUDADES } = __req("src/core/openmeteo.js");
+const { misionesPorAire } = __req("src/core/misiones.js");
+const { factorAire } = __req("src/core/puntos.js");
 
 let lecturas = { pm25: 12, pm10: 28, o3: 35, no2: 22, so2: 4, co: 0.6 };
+let ultimaConsulta = null;
+let cargando = false;
 
 function vistaAire(ctx) {
   const raiz = el('div');
@@ -5286,6 +6141,145 @@ function vistaAire(ctx) {
   raiz.appendChild(el('p', { clase: 'sub',
     texto: 'Indice AQI de la EPA (revision de 2024 para PM2,5) por interpolacion lineal por tramos, contrastado con las guias de la OMS de 2021, mucho mas estrictas. La contaminacion del aire mata a 8,1 millones de personas al anio.' }));
 
+  // ------------------------------------------------------------ datos en vivo
+  const panelVivo = el('div', { clase: 'tarjeta seccion' });
+  raiz.appendChild(panelVivo);
+
+  const buscador = el('input', { type: 'search', placeholder: 'Busca tu ciudad...' });
+  const resultados = el('div', { clase: 'fila envuelve', estilo: 'gap:7px;margin-top:9px' });
+
+  async function consultar(lat, lon, etiqueta) {
+    if (cargando) return;
+    cargando = true;
+    pintarVivo(`Consultando ${etiqueta}...`);
+    try {
+      const r = await consultarAire(lat, lon);
+      ultimaConsulta = { ...r, etiqueta };
+      // Se vuelcan las lecturas convertidas al formulario manual, para que
+      // la persona vea de donde sale cada numero y pueda ajustarlo.
+      lecturas = { ...r.lecturas };
+      ctx.almacen.guardarLecturaAire({
+        aqi: r.aqi.aqi, categoria: r.aqi.categoria, lugar: etiqueta,
+        lat, lon, dominante: r.aqi.dominante, fuente: r.meta.fuente,
+      });
+      toast({ titulo: `AQI ${r.aqi.aqi} en ${etiqueta}`, texto: r.aqi.categoria, icono: '💨' });
+      ctx.refrescar();
+    } catch (e) {
+      ultimaConsulta = null;
+      pintarVivo(null, e.message || 'No se pudo consultar la calidad del aire.');
+    } finally {
+      cargando = false;
+    }
+  }
+
+  function pintarVivo(mensajeCarga = null, error = null) {
+    panelVivo.innerHTML = '';
+    panelVivo.appendChild(el('div', { clase: 'fila entre envuelve', estilo: 'margin-bottom:13px;gap:9px' }, [
+      el('h2', { estilo: 'margin:0', texto: '📡 Datos reales de tu zona' }),
+      el('button', {
+        clase: 'btn primario s', texto: cargando ? 'Consultando...' : '📍 Usar mi ubicacion',
+        disabled: cargando,
+        onclick: async () => {
+          try {
+            const pos = await ubicacionActual();
+            await consultar(pos.lat, pos.lon, 'tu ubicacion');
+          } catch (e) { pintarVivo(null, e.message); }
+        },
+      }),
+    ]));
+
+    if (mensajeCarga) {
+      panelVivo.appendChild(el('div', { clase: 'aviso info pulso' }, ['⏳ ' + mensajeCarga]));
+      return;
+    }
+    if (error) {
+      panelVivo.appendChild(el('div', { clase: 'aviso error', estilo: 'margin-bottom:13px' }, ['⚠️ ' + error]));
+    }
+
+    if (ultimaConsulta) {
+      const r = ultimaConsulta;
+      const mision = misionesPorAire(r.aqi.aqi, r.etiqueta)[0];
+      const fac = factorAire(r.aqi.aqi, 'movilidad');
+      panelVivo.appendChild(el('div', { clase: 'rejilla c3', estilo: 'margin-bottom:15px' }, [
+        el('div', {}, [
+          el('div', { clase: 'metrica-valor', estilo: `color:${r.aqi.color}`, texto: String(r.aqi.aqi) }),
+          el('div', { clase: 'mini', texto: `AQI · ${r.aqi.categoria}` }),
+        ]),
+        el('div', {}, [
+          el('div', { clase: 'metrica-valor s', texto: CONTAMINANTES[r.aqi.dominante].nombre }),
+          el('div', { clase: 'mini', texto: 'contaminante dominante' }),
+        ]),
+        el('div', {}, [
+          el('div', { clase: 'metrica-valor s', texto: r.meta.medidoEn ? r.meta.medidoEn.slice(11, 16) : '—' }),
+          el('div', { clase: 'mini', texto: `medicion en ${r.etiqueta}` }),
+        ]),
+      ]));
+
+      if (mision) {
+        panelVivo.appendChild(el('div', {
+          clase: `aviso ${mision.urgencia === 'alta' ? 'error' : mision.urgencia === 'media' ? 'alerta' : 'exito'}`,
+          estilo: 'margin-bottom:13px',
+        }, [
+          el('span', { texto: mision.icono }),
+          el('div', {}, [
+            el('strong', { texto: mision.titulo }),
+            el('div', { clase: 'mini', estilo: 'margin-top:3px;color:inherit;opacity:.85', texto: mision.detalle }),
+            fac.factor > 1
+              ? el('div', { clase: 'mini', estilo: 'margin-top:5px;font-weight:700;color:inherit',
+                  texto: `⚡ ${fac.etiqueta} · activo durante 3 h` })
+              : null,
+          ]),
+        ]));
+      }
+
+      panelVivo.appendChild(el('div', { clase: 'mini' }, [
+        `Fuente: ${r.meta.fuente}. `,
+        r.meta.aqiDeLaFuente !== null
+          ? `El servicio publica un AQI de ${r.meta.aqiDeLaFuente}; el ${r.aqi.aqi} de arriba lo calculamos aqui con los tramos de la EPA a partir de las concentraciones crudas, tras convertirlas de µg/m³ a ppb. Si ambos coinciden, mejor senal.`
+          : 'Calculado aqui a partir de las concentraciones crudas.',
+      ]));
+    } else if (!error) {
+      panelVivo.appendChild(el('div', { clase: 'mini', estilo: 'margin-bottom:13px' },
+        ['Sin clave de API y sin servidor: la consulta sale directa de tu navegador. Cuando el aire esta mal, las acciones de movilidad y energia puntuan mas durante 3 horas.']));
+    }
+
+    panelVivo.appendChild(el('div', { clase: 'divisor' }));
+    panelVivo.appendChild(el('div', { clase: 'fila envuelve', estilo: 'gap:7px' },
+      CIUDADES.map((c) => el('button', {
+        clase: 'chip', texto: c.nombre, title: c.region, disabled: cargando,
+        onclick: () => consultar(c.lat, c.lon, c.nombre),
+      }))));
+    panelVivo.appendChild(el('div', { estilo: 'margin-top:11px' }, [buscador, resultados]));
+  }
+
+  let temporizador = null;
+  buscador.addEventListener('input', () => {
+    clearTimeout(temporizador);
+    const q = buscador.value;
+    temporizador = setTimeout(async () => {
+      resultados.innerHTML = '';
+      if (q.trim().length < 2) return;
+      try {
+        const ciudades = await buscarCiudad(q);
+        if (!ciudades.length) {
+          resultados.appendChild(el('span', { clase: 'mini', texto: 'Sin resultados.' }));
+          return;
+        }
+        for (const c of ciudades) {
+          resultados.appendChild(el('button', {
+            clase: 'chip', texto: `${c.nombre} · ${c.region}`,
+            onclick: () => consultar(c.lat, c.lon, c.nombre),
+          }));
+        }
+      } catch (e) {
+        resultados.appendChild(el('span', { clase: 'mini', texto: e.message }));
+      }
+    }, 350);
+  });
+
+  pintarVivo();
+
+  // --------------------------------------------------------- entrada manual
   const entradas = el('div', { clase: 'rejilla c3' }, Object.entries(CONTAMINANTES).map(([clave, meta]) => {
     const input = el('input', { type: 'number', min: '0', step: '0.1', value: String(lecturas[clave] ?? ''), inputmode: 'decimal' });
     input.addEventListener('input', () => { lecturas = { ...lecturas, [clave]: input.value === '' ? null : Number(input.value) }; pintar(); });
@@ -5293,7 +6287,7 @@ function vistaAire(ctx) {
   }));
 
   raiz.appendChild(el('div', { clase: 'tarjeta seccion' }, [
-    el('h2', { texto: 'Introduce las concentraciones medidas' }),
+    el('h2', { texto: '✍️ O introduce las concentraciones a mano' }),
     entradas,
     el('div', { clase: 'mini', estilo: 'margin-top:11px' },
       ['Puedes tomarlas de la estacion oficial de tu ciudad, de un sensor domestico o de servicios abiertos como OpenAQ o el Copernicus Atmosphere Monitoring Service.']),

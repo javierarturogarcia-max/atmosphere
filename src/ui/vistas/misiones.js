@@ -1,13 +1,18 @@
 /** misiones.js — Retos diarios, semanales y de temporada. */
 import { el, num, progreso, vacio, tarjetaMetrica } from '../componentes.js';
-import { misionesVigentes, evaluarMision, diasRestantes } from '../../core/misiones.js';
+import { misionesVigentes, evaluarMision, diasRestantes, misionesPorAire } from '../../core/misiones.js';
+import { lecturaAireVigente } from '../../core/estado.js';
 import { progresion } from '../../core/nivel.js';
 
 export function vistaMisiones(ctx) {
   const estado = ctx.almacen.get();
   const nivel = progresion(estado.perfil.xp).nivel;
-  const todas = misionesVigentes(estado.perfil.id, new Date(), { nivel })
-    .map((m) => ({ m, ev: evaluarMision(m, estado.registros) }));
+  // Las contextuales de aire solo existen mientras la lectura siga vigente.
+  const aire = lecturaAireVigente(estado);
+  const todas = [
+    ...misionesVigentes(estado.perfil.id, new Date(), { nivel }),
+    ...(aire ? misionesPorAire(aire.aqi, aire.lugar) : []),
+  ].map((m) => ({ m, ev: evaluarMision(m, estado.registros) }));
   const completadas = estado.misionesCompletadas || [];
   const hechasIds = new Set(completadas.map((c) => c.id));
 
@@ -27,6 +32,7 @@ export function vistaMisiones(ctx) {
   ]));
 
   for (const [tipo, titulo, desc] of [
+    ['aire', 'Segun el aire de hoy', 'Aparecen solo cuando la calidad del aire lo justifica'],
     ['diaria', 'Diarias', 'Se renuevan cada dia a medianoche'],
     ['semanal', 'Semanales', 'Ventana de lunes a domingo'],
     ['temporada', 'Reto del mes', 'El objetivo mas ambicioso'],

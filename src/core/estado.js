@@ -8,16 +8,30 @@
 import { accion, CATEGORIAS } from '../data/acciones.js';
 import { recompensa, puedeCanjear } from '../data/recompensas.js';
 import { calcularImpacto } from './impacto.js';
-import { calcularPuntos, bonusDiversidad } from './puntos.js';
+import { calcularPuntos, bonusDiversidad, factorAire, VIGENCIA_AIRE_MS } from './puntos.js';
 import { validarRegistro, NIVELES } from './validacion.js';
 import { claveDia, calcularRacha, congelacionesGanadas } from './rachas.js';
 import { detectarAscenso, nivelDesdeXP } from './nivel.js';
 import { construirResumen } from './analitica.js';
 import { evaluarLogros } from './logros.js';
-import { misionesVigentes, evaluarMision } from './misiones.js';
+import { misionesVigentes, evaluarMision, misionesPorAire } from './misiones.js';
 
 export const VERSION_ESTADO = 1;
 const CLAVE = 'atmosphere.estado.v1';
+
+
+/**
+ * Devuelve la ultima lectura de aire solo si sigue siendo representativa.
+ * Una lectura de anteanoche no puede seguir dando multiplicador: la
+ * contaminacion cambia de hora en hora.
+ */
+export function lecturaAireVigente(estado, fecha = new Date()) {
+  const l = estado?.aire?.ultimaLectura;
+  if (!l || !Number.isFinite(l.aqi) || !l.fecha) return null;
+  const edad = new Date(fecha).getTime() - new Date(l.fecha).getTime();
+  if (!Number.isFinite(edad) || edad < 0 || edad > VIGENCIA_AIRE_MS) return null;
+  return l;
+}
 
 export function estadoInicial(nombre = 'Guardian', paisCod = 'WW') {
   return {
@@ -144,7 +158,11 @@ export function crearAlmacen(inicial = null) {
       const racha = calcularRacha(dias, hoy, estado.perfil.congelaciones);
 
       // Misiones vigentes que esta accion puede empujar.
-      const misiones = misionesVigentes(estado.perfil.id, fecha, { nivel: nivelDesdeXP(estado.perfil.xp) });
+      const lecturaAire = lecturaAireVigente(estado, fecha);
+      const misiones = [
+        ...misionesVigentes(estado.perfil.id, fecha, { nivel: nivelDesdeXP(estado.perfil.xp) }),
+        ...(lecturaAire ? misionesPorAire(lecturaAire.aqi, lecturaAire.lugar, hoy) : []),
+      ];
       const contribuye = misiones.some((m) => {
         const o = m.objetivo;
         return (o.tipo === 'accion' && o.ref === accionId)
@@ -156,6 +174,7 @@ export function crearAlmacen(inicial = null) {
       const catsHoy = new Set(delDia.map((r) => accion(r.accionId)?.cat).filter(Boolean));
       catsHoy.add(a.cat);
       const bonus = bonusDiversidad(catsHoy.size);
+      const aire = factorAire(lecturaAire?.aqi, a.cat);
 
       const { puntos, desglose } = calcularPuntos({
         accionId,
@@ -164,7 +183,7 @@ export function crearAlmacen(inicial = null) {
         acumuladoCategoriaHoy: acumuladoCat,
         acumuladoDiaHoy: acumuladoDia,
         contribuyeMision: contribuye,
-        factorEvento: multActivo * bonus.factor,
+        factorEvento: multActivo * bonus.factor * aire.factor,
       });
 
       const registro = {
@@ -231,6 +250,7 @@ export function crearAlmacen(inicial = null) {
         misionesCompletadas: completadas,
         congelacionesGanadas: ganadas,
         bonusDiversidad: bonus,
+        bonusAire: aire,
         racha: nuevaRacha,
       };
     },
@@ -285,8 +305,11 @@ export function crearAlmacen(inicial = null) {
     },
 
     guardarLecturaAire(lectura) {
-      estado.aire.ultimaLectura = lectura;
-      estado.aire.historial = [...(estado.aire.historial || []), { ...lectura, fecha: new Date().toISOString() }].slice(-60);
+      // La marca de tiempo es imprescindible: el bonus por aire solo cuenta
+      // mientras la lectura siga siendo reciente (ver VIGENCIA_AIRE_MS).
+      const conFecha = { ...lectura, fecha: lectura.fecha || new Date().toISOString() };
+      estado.aire.ultimaLectura = conFecha;
+      estado.aire.historial = [...(estado.aire.historial || []), conFecha].slice(-120);
       notificar({ tipo: 'aire' });
     },
 

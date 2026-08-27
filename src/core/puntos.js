@@ -137,3 +137,32 @@ export function bonusDiversidad(categoriasDistintasHoy) {
 export function puntosOrientativos(accionId, cantidad, impacto) {
   return calcularPuntos({ accionId, cantidad, impacto, racha: 0, acumuladoCategoriaHoy: 0 }).puntos;
 }
+
+/**
+ * Multiplicador por calidad del aire real.
+ *
+ * Es la pieza que ata el juego al entorno: cuando el aire de tu ciudad esta
+ * mal, dejar el coche vale mas puntos, porque en ese momento vale mas de
+ * verdad. Las emisiones evitadas en un episodio de contaminacion tienen un
+ * efecto sanitario inmediato sobre las personas que estan respirando ese aire,
+ * no solo un efecto climatico difuso a decadas vista.
+ *
+ * Solo se aplica a movilidad y energia, que son las categorias que influyen
+ * sobre la contaminacion local. Reciclar no limpia el aire de hoy.
+ *
+ * @param {number} aqi indice de calidad del aire (escala EPA)
+ * @param {string} categoria categoria de la accion
+ */
+export function factorAire(aqi, categoria) {
+  if (!Number.isFinite(aqi) || !['movilidad', 'energia'].includes(categoria)) {
+    return { factor: 1, etiqueta: '', nivel: null };
+  }
+  if (aqi > 200) return { factor: 2.0, etiqueta: 'Aire muy daniño: puntuacion doble', nivel: 'muy_danina' };
+  if (aqi > 150) return { factor: 1.75, etiqueta: 'Aire daniño: x1,75 en movilidad limpia', nivel: 'danina' };
+  if (aqi > 100) return { factor: 1.5, etiqueta: 'Aire daniño para sensibles: x1,5', nivel: 'sensibles' };
+  if (aqi > 50) return { factor: 1.25, etiqueta: 'Aire moderado: x1,25', nivel: 'moderada' };
+  return { factor: 1, etiqueta: '', nivel: 'buena' };
+}
+
+/** Antiguedad maxima de una lectura para que siga contando: 3 horas. */
+export const VIGENCIA_AIRE_MS = 3 * 60 * 60 * 1000;

@@ -239,3 +239,67 @@ export function evaluarMision(mision, registros) {
 export function diasRestantes(mision, hoy = claveDia()) {
   return Math.max(0, diasEntre(hoy, mision.hasta.slice(0, 10)));
 }
+
+/**
+ * Misiones contextuales generadas por la calidad del aire real.
+ *
+ * A diferencia de las diarias, estas NO son deterministas por semilla: dependen
+ * de una condicion del mundo. Es justo lo que separa una app de habitos de una
+ * herramienta de salud publica: el reto aparece cuando de verdad hace falta.
+ *
+ * @param {number} aqi indice actual
+ * @param {string} lugar nombre legible de la ubicacion
+ * @param {string} dia clave YYYY-MM-DD
+ */
+export function misionesPorAire(aqi, lugar = 'tu zona', dia = claveDia()) {
+  if (!Number.isFinite(aqi)) return [];
+  const ventana = { desde: `${dia}T00:00:00`, hasta: `${dia}T23:59:59` };
+  const base = { tipo: 'aire', dia, aqi, lugar };
+
+  if (aqi > 150) {
+    return [{
+      ...base, ...ventana,
+      id: `a|${dia}|emergencia`,
+      icono: '🚨',
+      titulo: `AQI ${Math.round(aqi)} en ${lugar}: hoy el coche se queda en casa`,
+      detalle: 'Con este nivel toda la poblacion nota efectos. Cada trayecto que no se hace en combustion cuenta doble hoy.',
+      objetivo: { tipo: 'categoria', ref: 'movilidad', cantidad: 2, unidad: 'acciones' },
+      recompensa: { puntos: 300, xp: 200 },
+      urgencia: 'alta',
+    }];
+  }
+  if (aqi > 100) {
+    return [{
+      ...base, ...ventana,
+      id: `a|${dia}|alerta`,
+      icono: '😷',
+      titulo: `AQI ${Math.round(aqi)} en ${lugar}: deja el coche hoy`,
+      detalle: 'Danino para grupos sensibles: ninos, mayores, asmaticos y personas con cardiopatia. Tu decision de movilidad afecta al aire que respiran.',
+      objetivo: { tipo: 'categoria', ref: 'movilidad', cantidad: 2, unidad: 'acciones' },
+      recompensa: { puntos: 200, xp: 140 },
+      urgencia: 'media',
+    }];
+  }
+  if (aqi > 50) {
+    return [{
+      ...base, ...ventana,
+      id: `a|${dia}|moderado`,
+      icono: '🌫️',
+      titulo: `AQI ${Math.round(aqi)} en ${lugar}: evita empeorarlo`,
+      detalle: 'Aire moderado. Es el punto en el que las decisiones individuales todavia marcan la diferencia entre quedarse aqui o empeorar.',
+      objetivo: { tipo: 'categoria', ref: 'movilidad', cantidad: 1, unidad: 'accion' },
+      recompensa: { puntos: 110, xp: 80 },
+      urgencia: 'baja',
+    }];
+  }
+  return [{
+    ...base, ...ventana,
+    id: `a|${dia}|limpio`,
+    icono: '🌤️',
+    titulo: `AQI ${Math.round(aqi)} en ${lugar}: aprovecha el aire limpio`,
+    detalle: 'Buena calidad del aire. Es el mejor dia para el ejercicio al aire libre, y para mantenerlo asi.',
+    objetivo: { tipo: 'accion', ref: 'mov_caminar', cantidad: 3, unidad: 'km' },
+    recompensa: { puntos: 90, xp: 70 },
+    urgencia: 'ninguna',
+  }];
+}

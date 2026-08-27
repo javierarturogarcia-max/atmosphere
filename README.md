@@ -32,7 +32,11 @@ La mayoría de las apps de sostenibilidad fallan por una de estas tres razones:
 
 **Calculadora de huella** — método híbrido ACV + EEIO, mix eléctrico de 38 países, forzamiento radiativo de la aviación, 8 escenarios contrafactuales ordenados por ahorro.
 
-**Calidad del aire** — AQI de la EPA (revisión 2024 de PM2,5), contraste con las guías OMS 2021, riesgo relativo de mortalidad y años de vida perdidos según el modelo log-lineal del GBD.
+**Calidad del aire en tiempo real** — datos de Open-Meteo (modelos CAMS de Copernicus y GEOS-CF de la NASA) por geolocalización o búsqueda de ciudad, sin clave de API y sin servidor. AQI de la EPA (revisión 2024 de PM2,5), contraste con las guías OMS 2021, riesgo relativo de mortalidad y años de vida perdidos según el modelo log-lineal del GBD.
+
+**El juego reacciona al entorno** — cuando el aire de tu zona está mal, las acciones de movilidad y energía puntúan hasta el doble durante 3 horas, y aparece una misión contextual (*«AQI 117: deja el coche hoy»*). Es lo que separa una app de hábitos de una herramienta de salud pública.
+
+**Verificación con el dispositivo** — GPS en vivo o importación de trazas GPX/TCX desde Strava, Garmin, Komoot o Apple Salud. La distancia la mide el aparato, no la teclea la persona: se infiere el modo de transporte del perfil de velocidad, se descartan los saltos de GPS y se comprueba que la traza respalde la acción declarada.
 
 **Antifraude** — cuatro capas: topes físicos, tiempos de espera, z robusta con degradación a desviación absoluta media, y coherencia temporal del día (nadie declara más de 24 h de actividad).
 
@@ -42,7 +46,7 @@ La mayoría de las apps de sostenibilidad fallan por una de estas tres razones:
 
 ```bash
 npm run dev      # servidor local en http://localhost:4173
-npm test         # 85 pruebas del motor
+npm test         # 112 pruebas del motor
 npm run build    # genera dist/atmosphere.html (un solo archivo, sin dependencias)
 npm run verify   # pruebas + build
 ```
@@ -74,7 +78,10 @@ src/
 │   ├── misiones.js       Generador determinista de retos
 │   ├── logros.js         Evaluación de insignias
 │   ├── huella.js         Calculadora ACV + EEIO
-│   ├── aire.js           AQI, guías OMS y riesgo sanitario
+│   ├── aire.js           AQI, guías OMS, riesgo sanitario y conversión de unidades
+│   ├── openmeteo.js      Fuente de datos reales de calidad del aire
+│   ├── gps.js            Trazas, inferencia de modo y verificación
+│   ├── gpx.js            Lectura de archivos GPX y TCX
 │   ├── ranking.js        Ligas y cohorte log-normal
 │   ├── rng.js            Aleatoriedad determinista (mulberry32)
 │   └── estado.js         Almacén, persistencia y transacciones
@@ -112,7 +119,7 @@ subcarpeta de proyecto.
 
 ### GitHub Pages (configurado en este repositorio)
 
-El flujo de trabajo `.github/workflows/pages.yml` ejecuta las pruebas,
+El flujo de trabajo `.github/workflows/pages.yml` ejecuta las 112 pruebas,
 comprueba que `dist/` no esté desfasado respecto a `src/` y publica. Para
 activarlo una sola vez:
 

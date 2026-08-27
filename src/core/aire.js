@@ -137,3 +137,56 @@ export const CONTAMINANTES = Object.freeze({
   so2:  { nombre: 'SO2',   unidad: 'ppb', origen: 'Quema de carbon y fueloil con azufre; refino y maritimo.' },
   co:   { nombre: 'CO',    unidad: 'ppm', origen: 'Combustion incompleta: motores, braseros, calentadores mal ventilados.' },
 });
+
+// ============================================================ conversion de unidades
+
+/**
+ * Volumen molar de un gas ideal a 25 C y 1013,25 hPa, en L/mol.
+ * Es la constante que usa la EPA para convertir entre masa y volumen.
+ */
+export const VOLUMEN_MOLAR = 24.45;
+
+/** Masas moleculares en g/mol de los gases con tramos de AQI. */
+export const MASA_MOLAR = Object.freeze({
+  o3: 48.00,
+  no2: 46.0055,
+  so2: 64.066,
+  co: 28.010,
+});
+
+/**
+ * Convierte una concentracion de ug/m3 a ppb.
+ *
+ * IMPRESCINDIBLE: los tramos del AQI de la EPA estan definidos en ppb para O3,
+ * NO2 y SO2, y en ppm para CO, pero casi todas las fuentes de datos (Open-Meteo,
+ * CAMS, la mayoria de sensores) publican en ug/m3. Aplicar los tramos
+ * directamente sobre ug/m3 es un error silencioso: da un AQI plausible pero
+ * equivocado, casi siempre por exceso.
+ */
+export function ugm3ApPpb(valor, contaminante) {
+  const mw = MASA_MOLAR[contaminante];
+  if (!mw || !Number.isFinite(valor)) return null;
+  return (valor * VOLUMEN_MOLAR) / mw;
+}
+
+/** Conversion inversa: de ppb a ug/m3. */
+export function ppbAUgm3(valor, contaminante) {
+  const mw = MASA_MOLAR[contaminante];
+  if (!mw || !Number.isFinite(valor)) return null;
+  return (valor * mw) / VOLUMEN_MOLAR;
+}
+
+/**
+ * Normaliza un juego de lecturas en ug/m3 a las unidades que espera calcularAQI:
+ * PM en ug/m3 (sin tocar), O3/NO2/SO2 en ppb y CO en ppm.
+ */
+export function normalizarDesdeUgm3(lecturas) {
+  const salida = {};
+  if (Number.isFinite(lecturas.pm25)) salida.pm25 = lecturas.pm25;
+  if (Number.isFinite(lecturas.pm10)) salida.pm10 = lecturas.pm10;
+  for (const gas of ['o3', 'no2', 'so2']) {
+    if (Number.isFinite(lecturas[gas])) salida[gas] = ugm3ApPpb(lecturas[gas], gas);
+  }
+  if (Number.isFinite(lecturas.co)) salida.co = ugm3ApPpb(lecturas.co, 'co') / 1000; // ppb -> ppm
+  return salida;
+}

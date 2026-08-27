@@ -6,7 +6,7 @@ Lo construido es una base sólida y funcional. Esto es lo que la convertiría en
 
 ## Nivel 1 — Alto impacto, esfuerzo moderado
 
-### 1.1 Verificación automática en lugar de honor system
+### 1.1 Verificación automática en lugar de honor system — ✅ IMPLEMENTADO (GPS y GPX)
 
 El talón de Aquiles de todo sistema de puntos es el autorreporte. Cuatro vías, de menor a mayor fricción:
 
@@ -19,7 +19,7 @@ El talón de Aquiles de todo sistema de puntos es el autorreporte. Cuatro vías,
 
 Recomendación: empezar por la integración con salud/fitness, que da la mayor cobertura por el menor esfuerzo, y usar el índice de confianza ya implementado para separar **ranking abierto** de **ranking verificado**.
 
-### 1.2 Lectura de calidad del aire en tiempo real
+### 1.2 Lectura de calidad del aire en tiempo real — ✅ IMPLEMENTADO
 
 La vista de aire ya calcula el AQI correctamente; solo le falta la fuente de datos. **OpenAQ** (gratuita, global) y el **Copernicus Atmosphere Monitoring Service** dan lecturas por coordenadas. Con eso:
 
