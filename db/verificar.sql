@@ -6,6 +6,9 @@
 --
 -- Toda fila debe salir con OK. Si alguna sale MAL, vuelve a ejecutar
 -- db/esquema.sql completo: es idempotente y se puede repetir sin dano.
+--
+-- Las filas del bloque 'Social' cubren db/social.sql, que es OPCIONAL. Si no
+-- lo has instalado saldran en '--' (no instalado), que no es un fallo.
 -- =============================================================================
 
 with comprobaciones as (
@@ -92,8 +95,12 @@ with comprobaciones as (
   -- consola del navegador y el ranking deja de significar nada.
   union all
   select 9, 'Antifraude',
-         'El cliente SOLO puede escribir nombre, pais y publico',
-         coalesce(array_agg(column_name::text order by column_name::text), '{}') = array['nombre','pais','publico']::text[],
+         'El cliente SOLO puede escribir columnas inocuas del perfil',
+         -- Lista blanca: 'mote' se anade con db/social.sql y tambien es inocua.
+         -- Se comprueba que no haya NINGUNA columna fuera de ella y que esten
+         -- las tres basicas; asi la comprobacion vale con capa social y sin ella.
+         coalesce(bool_and(column_name::text in ('nombre','pais','publico','mote')), false)
+           and count(*) filter (where column_name::text in ('nombre','pais','publico')) = 3,
          coalesce(string_agg(column_name::text, ', ' order by column_name::text), '(ninguna)')
     from information_schema.column_privileges
    where table_schema = 'public' and table_name = 'perfiles'
@@ -108,7 +115,7 @@ with comprobaciones as (
     from information_schema.column_privileges
    where table_schema = 'public' and table_name = 'perfiles'
      and grantee = 'authenticated' and privilege_type = 'UPDATE'
-     and column_name in ('puntos','xp','nivel','co2e_total','agua_total','residuo_total','registros_n','dias_activos')
+     and column_name in ('puntos','xp','nivel','co2e_total','agua_total','residuo_total','registros_n','dias_activos','aura')
 
   -- 8. Estado de los datos --------------------------------------------------
   union all
@@ -117,6 +124,62 @@ with comprobaciones as (
          true,
          count(*) || ' perfiles, ' || count(*) filter (where publico) || ' publicos'
     from public.perfiles
+
+
+  -- 9. Capa social (db/social.sql, opcional) --------------------------------
+  -- Estas filas salen en '--' si no se ha instalado la capa social; solo se
+  -- ponen en MAL si esta instalada a medias, que es el caso que importa.
+  union all
+  select 13, 'Social',
+         'Las 3 tablas de la comunidad existen',
+         count(*) = 3,
+         case when count(*) = 0 then 'capa social no instalada (opcional)'
+              else string_agg(tablename, ', ' order by tablename) end
+    from pg_tables
+   where schemaname = 'public'
+     and tablename in ('publicaciones','megusta','reportes')
+
+  union all
+  select 14, 'Social',
+         'RLS activada en las 3 tablas de la comunidad',
+         count(*) filter (where c.relrowsecurity) = count(*),
+         case when count(*) = 0 then 'capa social no instalada (opcional)'
+              else string_agg(c.relname || case when c.relrowsecurity then ' ✓' else ' ✗' end,
+                              ', ' order by c.relname) end
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'public'
+     and c.relname in ('publicaciones','megusta','reportes')
+
+  union all
+  select 15, 'Social',
+         'El cliente NO puede escribir aura ni likes_n',
+         count(*) = 0,
+         case when count(*) = 0 then 'reputacion protegida'
+              else 'PERMISO INDEBIDO sobre ' || string_agg(table_name::text || '.' || column_name::text, ', ') end
+    from information_schema.column_privileges
+   where table_schema = 'public'
+     and grantee = 'authenticated' and privilege_type = 'UPDATE'
+     and ((table_name = 'perfiles' and column_name = 'aura')
+       or (table_name = 'publicaciones' and column_name in ('likes_n','reportes_n','oculto','aura_generada')))
+
+  union all
+  select 16, 'Social',
+         'publicaciones es append-only (sin UPDATE)',
+         count(*) = 0,
+         case when count(*) = 0 then 'nadie edita una publicacion ya hecha'
+              else 'HAY politica UPDATE' end
+    from pg_policies
+   where schemaname = 'public' and tablename = 'publicaciones' and cmd = 'UPDATE'
+
+  union all
+  select 17, 'Social',
+         'El cubo de medios existe y es publico',
+         count(*) = 1,
+         case when count(*) = 0 then 'falta el cubo evidencias — crealo en Storage'
+              else 'evidencias, ' || (select case when public then 'publico' else 'PRIVADO (deberia ser publico)' end
+                                        from storage.buckets where id = 'evidencias') end
+    from storage.buckets where id = 'evidencias'
 
   union all
   select 12, 'Datos',
@@ -128,7 +191,11 @@ with comprobaciones as (
 )
 select bloque,
        comprobacion,
-       case when correcto then 'OK' else 'MAL' end as estado,
-       detalle
+       case when bloque = 'Social' and to_regclass('public.publicaciones') is null then '--'
+            when correcto then 'OK'
+            else 'MAL' end as estado,
+       case when bloque = 'Social' and to_regclass('public.publicaciones') is null
+            then 'capa social no instalada (opcional)'
+            else detalle end as detalle
   from comprobaciones
  order by orden;

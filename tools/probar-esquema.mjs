@@ -5,38 +5,14 @@
  * servidor: se comprueba que el esquema es SQL valido y, sobre todo, que los
  * disparadores y las restricciones se comportan como dicen los comentarios.
  *
- * Se simulan las piezas que aporta Supabase y que no existen en un Postgres
- * desnudo: el esquema `auth`, la funcion `auth.uid()` y los roles `anon` y
- * `authenticated`.
+ * Las piezas que aporta Supabase y no existen en un Postgres desnudo —el
+ * esquema `auth`, `auth.uid()`, los roles y el trozo de `storage`— salen de
+ * ./simulacro-supabase.mjs, compartido con las otras dos baterias.
  */
-import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'node:fs';
+import { baseSimulada } from './simulacro-supabase.mjs';
 
-const PREPARACION = `
-create schema if not exists auth;
-
-create table if not exists auth.users (
-  id uuid primary key default gen_random_uuid(),
-  email text,
-  raw_user_meta_data jsonb default '{}'::jsonb
-);
-
--- En Supabase auth.uid() lee el JWT. Aqui se lee una variable de sesion.
-create or replace function auth.uid() returns uuid
-language sql stable as $$
-  select nullif(current_setting('atmosphere.usuario', true), '')::uuid;
-$$;
-
-do $$ begin
-  if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon; end if;
-  if not exists (select 1 from pg_roles where rolname = 'authenticated') then create role authenticated; end if;
-end $$;
-
-grant usage on schema public to anon, authenticated;
-grant select, insert, update, delete on all tables in schema public to authenticated;
-`;
-
-const db = await PGlite.create();
+const db = await baseSimulada();
 const fallos = [];
 const ok = (n) => console.log(`  ✅ ${n}`);
 const mal = (n, e) => { fallos.push(`${n}: ${e}`); console.log(`  ❌ ${n}\n     ${e}`); };
@@ -48,7 +24,6 @@ const comoUsuario = (id) => db.exec(`set atmosphere.usuario = '${id}';`);
 
 console.log('PostgreSQL:', (await db.query('select version()')).rows[0].version.split(',')[0]);
 console.log('\n── 1. El esquema se ejecuta entero ──');
-await db.exec(PREPARACION);
 try {
   await db.exec(readFileSync('db/esquema.sql', 'utf8'));
   ok('db/esquema.sql se ejecuta sin errores');

@@ -126,6 +126,14 @@ export function olvidarTodo() {
 
 // ================================================================== transporte
 
+/**
+ * Transporte compartido con la capa social (social.js). Se exporta para no
+ * duplicar el manejo de cabeceras, errores y sesion caducada en dos modulos.
+ */
+export async function llamarAPI(ruta, opciones = {}) {
+  return llamar(ruta, opciones);
+}
+
 async function llamar(ruta, { metodo = 'GET', cuerpo = null, autenticado = true, cabeceras = {} } = {}) {
   const cfg = configuracion();
   if (!cfg) throw new ErrorNube('La nube no esta configurada.', 'sin_configurar');

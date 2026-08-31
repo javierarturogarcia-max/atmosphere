@@ -28,7 +28,7 @@ La mayoría de las apps de sostenibilidad fallan por una de estas tres razones:
 
 **Sistema de juego** — XP con curva superlineal, 10 rangos, 47 insignias evaluadas por predicados puros, misiones diarias/semanales/mensuales generadas de forma determinista, rachas con congelaciones, 6 ligas, 16 recompensas canjeables.
 
-**Sincronización opcional en la nube** — Postgres (Supabase) con seguridad por fila, grupos por clase o centro, y ranking con personas reales. Desactivada por defecto: la app funciona entera sin cuenta. **El cliente nunca escribe su propia puntuación** — solo inserta registros inmutables, y el servidor deriva los totales con un disparador. El esquema se verifica contra un PostgreSQL real con `npm run test:db` (30 comprobaciones). Puesta en marcha en [`db/INSTALACION.md`](db/INSTALACION.md).
+**Sincronización opcional en la nube** — Postgres (Supabase) con seguridad por fila, grupos por clase o centro, y ranking con personas reales. Desactivada por defecto: la app funciona entera sin cuenta. **El cliente nunca escribe su propia puntuación** — solo inserta registros inmutables, y el servidor deriva los totales con un disparador. El esquema se verifica contra un PostgreSQL real con `npm run test:db` (30 comprobaciones del núcleo + 19 de la capa social). Puesta en marcha en [`db/INSTALACION.md`](db/INSTALACION.md).
 
 **Analítica** — regresión OLS y Theil-Sen, test de tendencia de Mann-Kendall con corrección por empates, media móvil, EWMA, bootstrap, índices de Shannon/Pielou/Gini, perfiles circadiano y semanal, mapa de calor de constancia.
 
@@ -51,6 +51,10 @@ La mayoría de las apps de sostenibilidad fallan por una de estas tres razones:
 
 **Verificación con el dispositivo** — GPS en vivo o importación de trazas GPX/TCX desde Strava, Garmin, Komoot o Apple Salud. La distancia la mide el aparato, no la teclea la persona: se infiere el modo de transporte del perfil de velocidad, se descartan los saltos de GPS y se comprueba que la traza respalde la acción declarada.
 
+**Red social de buenas acciones** — cada prueba puede publicarse en el muro de la comunidad con un **mote** (`@sembradora`, 3-15 caracteres). Los vídeos cortos se reproducen en bucle y sin sonido, hay pestaña de **🔥 Virales** y de **🕐 Reciente**, y los me gusta alimentan el **aura**, una reputación pública de buenas acciones.
+
+El aura **no se mezcla con los puntos**: los puntos son impacto físico, el aura es reconocimiento social. Un vídeo gracioso nunca vale más que plantar un árbol. Y el aura **la deriva el servidor**, no el navegador: `+8` por publicar, `+2` por me gusta recibido, `+5` si la prueba venía verificada. Nadie puede darse me gusta a sí mismo —lo impide la política de la base de datos, no una comprobación del cliente— y tres reportes de personas distintas ocultan una publicación y dejan de contarle el aura.
+
 **Antifraude** — cuatro capas: topes físicos, tiempos de espera, z robusta con degradación a desviación absoluta media, y coherencia temporal del día (nadie declara más de 24 h de actividad).
 
 ---
@@ -59,8 +63,8 @@ La mayoría de las apps de sostenibilidad fallan por una de estas tres razones:
 
 ```bash
 npm run dev      # servidor local en http://localhost:4173
-npm test         # 146 pruebas del motor
-npm run test:db  # ejecuta db/esquema.sql contra un PostgreSQL real (PGlite)
+npm test         # 161 pruebas del motor
+npm run test:db  # ejecuta el SQL contra un PostgreSQL real (PGlite): 30 + 19 comprobaciones
 npm run build    # genera dist/atmosphere.html (un solo archivo, sin dependencias)
 npm run verify   # pruebas + esquema + build
 ```
@@ -99,17 +103,18 @@ src/
 │   ├── gpx.js            Lectura de archivos GPX y TCX
 │   ├── evidencia.js      EXIF, hash perceptual y credibilidad de pruebas
 │   ├── nube.js           Cliente REST de Supabase, sin dependencias
+│   ├── social.js         Muro, motes, aura, me gusta y subida de medios
 │   ├── ranking.js        Ligas y cohorte log-normal
 │   ├── rng.js            Aleatoriedad determinista (mulberry32)
 │   └── estado.js         Almacén, persistencia y transacciones
 │
-├── db/            esquema.sql (tablas, RLS, disparadores) e INSTALACION.md
+├── db/            esquema.sql (núcleo), social.sql (muro y aura) e INSTALACION.md
 │
 └── ui/            Interfaz (sin dependencias, gráficos SVG a mano)
     ├── app.js            Navegación y enrutado
     ├── componentes.js    Primitivas y gráficos
     ├── medios.js         Cámara, miniaturas e IndexedDB
-    └── vistas/           12 vistas
+    └── vistas/           13 vistas
 ```
 
 La separación **impacto ≠ puntos** es deliberada: el impacto es física y no debe contaminarse con reglas de juego; los puntos son una capa motivacional construida encima y sustituible.
@@ -139,7 +144,7 @@ subcarpeta de proyecto.
 
 ### GitHub Pages (configurado en este repositorio)
 
-El flujo de trabajo `.github/workflows/pages.yml` ejecuta las 146 pruebas,
+El flujo de trabajo `.github/workflows/pages.yml` ejecuta las 161 pruebas,
 comprueba que `dist/` no esté desfasado respecto a `src/` y publica. Para
 activarlo una sola vez:
 
@@ -169,7 +174,18 @@ extra, no un requisito para servir el sitio.
 
 ## Privacidad
 
-Los datos viven exclusivamente en `localStorage`. No hay peticiones de red salvo la hoja de fuentes tipográficas, no hay cookies de terceros ni identificadores publicitarios, y la aplicación funciona entera sin conexión. Puedes exportar todo tu historial en JSON o CSV y borrarlo cuando quieras.
+Por defecto los datos viven exclusivamente en `localStorage` y las fotos y vídeos en IndexedDB, ambos en tu dispositivo. No hay cookies de terceros ni identificadores publicitarios, y la aplicación funciona entera sin conexión.
+
+Solo hay tres peticiones de red, y **ninguna ocurre sin que la pidas**:
+
+| Petición | Cuándo | Qué se envía |
+|---|---|---|
+| Fuentes tipográficas | Al cargar | Nada tuyo |
+| Open-Meteo (aire) | Si consultas la calidad del aire | Coordenadas redondeadas o el nombre de la ciudad. Sin cuenta ni clave |
+| Supabase (nube) | Si conectas un proyecto y creas cuenta | Acción, categoría, cantidad, impacto, puntos y fecha |
+| Supabase (comunidad) | Solo al pulsar **Publicar** en una prueba concreta | Ese vídeo o foto, su mote y el texto que escribas |
+
+La sincronización **no** sube fotos, vídeos, notas ni coordenadas: eso solo sale de tu dispositivo si publicas una prueba a propósito, una por una. Y lo publicado se puede borrar desde la propia tarjeta. Puedes exportar todo tu historial en JSON o CSV y borrarlo cuando quieras.
 
 ## Licencia
 

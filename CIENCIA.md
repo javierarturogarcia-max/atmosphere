@@ -357,6 +357,98 @@ La subida es **idempotente**: la clave primaria de `registros` es el id
 generado en el dispositivo, así que reenviar un lote tras un corte de red no
 duplica nada.
 
+## 8sexies. La capa social: por qué el aura no son puntos
+
+La comunidad es la parte del proyecto donde la gamificación puede estropear la
+ciencia. Si los me gusta dieran puntos, el sistema empezaría a premiar
+producción de vídeo en lugar de reducción de emisiones, y en pocas semanas
+tendría un catálogo de acciones ordenado por fotogenia. Eso es exactamente lo
+que se quiso evitar desde la primera línea del motor de impacto.
+
+La solución es que hay **dos monedas y no se cambian entre sí**:
+
+| | Puntos | Aura |
+|---|---|---|
+| Qué mide | Impacto físico evitado | Reconocimiento de la comunidad |
+| De dónde sale | kg CO₂e, litros, kg de residuo | Publicar y recibir me gusta |
+| Quién la calcula | Disparador del servidor sobre `registros` | Función del servidor sobre `publicaciones` |
+| Afecta a | Nivel, ligas, misiones, recompensas | Solo al perfil público y al ranking de aura |
+| Se puede convertir | — | **No** |
+
+Un vídeo gracioso puede acumular mucha aura y **cero** puntos, porque los
+puntos ya se concedieron —o no— cuando se registró la acción, con sus factores
+y su línea base. Publicar no vuelve a puntuar. La aura vive en otra columna, en
+otra tabla y en otro ranking.
+
+### El reparto de aura
+
+```
+aura = Σ  ( 8  por publicación
+          + 2  × me gusta recibidos
+          + 5  si la prueba era fechada, situada o vídeo )
+```
+
+Es una **suma sobre las publicaciones visibles**, no un contador incremental.
+Esa diferencia importa: un contador que solo sube no puede deshacer nada, así
+que un me gusta retirado o una publicación oculta por reportes dejarían aura
+fantasma. Al derivarla de cero cada vez, la aura siempre refleja el estado
+actual del muro. Es el mismo principio que rige los puntos: el servidor no
+guarda lo que le mandan, recalcula lo que se deduce de los hechos.
+
+El `+5` por prueba verificada es deliberado: hace que la publicación más
+rentable en aura sea, precisamente, la que trae metadatos coherentes. La
+credibilidad y la popularidad apuntan en la misma dirección en lugar de
+competir.
+
+### Los tres candados están en la base de datos, no en el navegador
+
+Cualquiera puede abrir la consola del navegador y llamar a la API directamente,
+así que una comprobación en JavaScript no es una comprobación. Las tres reglas
+que sostienen la capa social son políticas de PostgreSQL:
+
+1. **Nadie se da me gusta a sí mismo.** La política de `insert` sobre `megusta`
+   exige `not exists (select 1 from publicaciones p where p.id = publicacion_id
+   and p.perfil_id = auth.uid())`.
+2. **Nadie publica el registro de otra persona.** La política comprueba que el
+   `registro_id` pertenezca a quien publica.
+3. **Nadie escribe su propia aura ni su propio recuento de me gusta.** No es
+   una validación: es un `GRANT UPDATE (nombre, pais, publico, mote)` que
+   sencillamente no incluye esas columnas. Un permiso que no existe no se puede
+   sortear.
+
+El doble me gusta lo impide la clave primaria compuesta `(publicacion_id,
+perfil_id)`, no un `if`.
+
+### Moderación sin moderadores
+
+**Tres reportes de tres personas distintas** ocultan una publicación
+automáticamente: desaparece del muro y de los virales, y su aura deja de
+contar, porque `recalcular_aura()` solo suma lo que no está oculto. Su autor
+sigue viéndola —marcada— para poder borrarla. La regla es simple a propósito:
+un umbral fijo y verificable en el esquema es mejor que un criterio
+discrecional que nadie puede auditar, y el proyecto no tiene equipo de
+moderación 24/7.
+
+Es un compromiso conocido: tres personas coordinadas pueden ocultar una
+publicación legítima. Para un aula o un centro educativo —el caso de uso real—
+el coste de ese abuso es bajo y reversible; el de no tener moderación ninguna,
+no.
+
+### Los medios
+
+Los vídeos y fotos publicados van a un cubo de Storage llamado `evidencias`,
+donde **cada persona solo puede escribir dentro de la carpeta que lleva su
+propio identificador** (`${perfil_id}/...`), comprobado por una política sobre
+`storage.objects`. Límite de 25 MB por archivo. Lo no publicado sigue donde
+estaba: en IndexedDB, en el dispositivo, sin salir nunca.
+
+Las 19 comprobaciones de `tools/probar-social.mjs` ejecutan `db/social.sql`
+contra un PostgreSQL real y verifican precisamente los intentos de abuso:
+autolike, doble me gusta, escribir aura ajena, inflar `likes_n`, publicar el
+registro de otro y subir un archivo a la carpeta de otra persona. Todos deben
+fallar; si alguno pasara, la prueba se pone en rojo.
+
+
 ## 9. Limitaciones que asumimos por escrito
 
 1. **Los factores son promedios.** Tu coche, tu red y tu supermercado concretos difieren. Las cifras son órdenes de magnitud correctos, no contabilidad.
@@ -370,4 +462,9 @@ duplica nada.
    más habitual —reenviar la misma imagen—, pero no la hace imposible. Por eso
    la evidencia alimenta un *índice de confianza* gradual en lugar de un sello
    binario de "verificado".
-7. **La cohorte del ranking es sintética.** Se genera con una distribución log-normal, que es la forma real de la participación voluntaria, pero no son personas reales mientras no exista backend. La app lo declara en pantalla.
+7. **El aura es popularidad, y la popularidad tiene sesgos.** Premia a quien
+   tiene mejor cámara, mejor luz y más contactos en el grupo, no a quien más
+   reduce. Por eso no toca los puntos, el nivel ni las recompensas: es un
+   ranking aparte, declarado como tal. Quien no quiera participar no publica
+   nada y su experiencia de juego es idéntica.
+8. **La cohorte del ranking es sintética.** Se genera con una distribución log-normal, que es la forma real de la participación voluntaria, pero no son personas reales mientras no exista backend. La app lo declara en pantalla.
