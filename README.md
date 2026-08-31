@@ -28,7 +28,7 @@ La mayoría de las apps de sostenibilidad fallan por una de estas tres razones:
 
 **Sistema de juego** — XP con curva superlineal, 10 rangos, 47 insignias evaluadas por predicados puros, misiones diarias/semanales/mensuales generadas de forma determinista, rachas con congelaciones, 6 ligas, 16 recompensas canjeables.
 
-**Sincronización opcional en la nube** — Postgres (Supabase) con seguridad por fila, grupos por clase o centro, y ranking con personas reales. Desactivada por defecto: la app funciona entera sin cuenta. **El cliente nunca escribe su propia puntuación** — solo inserta registros inmutables, y el servidor deriva los totales con un disparador. Ver [`db/esquema.sql`](db/esquema.sql).
+**Sincronización opcional en la nube** — Postgres (Supabase) con seguridad por fila, grupos por clase o centro, y ranking con personas reales. Desactivada por defecto: la app funciona entera sin cuenta. **El cliente nunca escribe su propia puntuación** — solo inserta registros inmutables, y el servidor deriva los totales con un disparador. El esquema se verifica contra un PostgreSQL real con `npm run test:db` (30 comprobaciones). Puesta en marcha en [`db/INSTALACION.md`](db/INSTALACION.md).
 
 **Analítica** — regresión OLS y Theil-Sen, test de tendencia de Mann-Kendall con corrección por empates, media móvil, EWMA, bootstrap, índices de Shannon/Pielou/Gini, perfiles circadiano y semanal, mapa de calor de constancia.
 
@@ -60,11 +60,13 @@ La mayoría de las apps de sostenibilidad fallan por una de estas tres razones:
 ```bash
 npm run dev      # servidor local en http://localhost:4173
 npm test         # 146 pruebas del motor
+npm run test:db  # ejecuta db/esquema.sql contra un PostgreSQL real (PGlite)
 npm run build    # genera dist/atmosphere.html (un solo archivo, sin dependencias)
-npm run verify   # pruebas + build
+npm run verify   # pruebas + esquema + build
 ```
 
-No hay dependencias de producción. `index.html` funciona directamente sobre cualquier servidor estático, y `dist/atmosphere.html` funciona incluso abierto desde el sistema de archivos.
+No hay dependencias de producción; la única de desarrollo es PGlite, que sirve
+para verificar el esquema SQL y no llega al navegador. `index.html` funciona directamente sobre cualquier servidor estático, y `dist/atmosphere.html` funciona incluso abierto desde el sistema de archivos.
 
 ---
 
@@ -101,7 +103,7 @@ src/
 │   ├── rng.js            Aleatoriedad determinista (mulberry32)
 │   └── estado.js         Almacén, persistencia y transacciones
 │
-├── db/            esquema.sql — tablas, RLS y disparadores de Postgres
+├── db/            esquema.sql (tablas, RLS, disparadores) e INSTALACION.md
 │
 └── ui/            Interfaz (sin dependencias, gráficos SVG a mano)
     ├── app.js            Navegación y enrutado

@@ -8,7 +8,8 @@
     "test": "node --test test/*.test.js",
     "build": "node tools/build.mjs",
     "dev": "node tools/servidor.mjs",
-    "verify": "npm test && npm run build"
+    "verify": "npm test && npm run test:db && npm run build",
+    "test:db": "node tools/probar-esquema.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -20,5 +21,8 @@
     "huella-de-carbono",
     "calidad-del-aire",
     "pwa"
-  ]
+  ],
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.2.17"
+  }
 }

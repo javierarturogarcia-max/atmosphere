@@ -38,6 +38,11 @@ jobs:
       - name: Ejecutar la bateria de pruebas
         run: npm test
 
+      - name: Verificar el esquema SQL contra un PostgreSQL real
+        run: |
+          npm install --no-audit --no-fund
+          npm run test:db
+
       - name: Reconstruir el archivo unico y comprobar que no ha quedado desfasado
         run: |
           npm run build
