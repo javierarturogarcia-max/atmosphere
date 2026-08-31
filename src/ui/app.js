@@ -18,20 +18,20 @@ import { vistaCiencia } from './vistas/ciencia.js';
 import { vistaPerfil } from './vistas/perfil.js';
 
 const RUTAS = [
-  { id: 'panel',     etiqueta: 'Panel',      icono: '🏠', vista: vistaPanel,     movil: true },
-  { id: 'registrar', etiqueta: 'Registrar',  icono: '➕', vista: vistaRegistrar, movil: true },
-  { id: 'misiones',  etiqueta: 'Misiones',   icono: '🎯', vista: vistaMisiones,  movil: true },
+  { id: 'panel',     etiqueta: 'Panel',      icono: '🏠', vista: vistaPanel },
+  { id: 'registrar', etiqueta: 'Registrar',  icono: '➕', vista: vistaRegistrar },
+  { id: 'misiones',  etiqueta: 'Misiones',   icono: '🎯', vista: vistaMisiones },
   { id: 'logros',    etiqueta: 'Insignias',  icono: '🏅', vista: vistaLogros },
   { id: 'tienda',    etiqueta: 'Recompensas', icono: '🎁', vista: vistaTienda },
   { separador: true },
-  { id: 'analitica', etiqueta: 'Analitica',  icono: '📊', vista: vistaAnalitica, movil: true },
+  { id: 'analitica', etiqueta: 'Analitica',  icono: '📊', vista: vistaAnalitica },
   { id: 'huella',    etiqueta: 'Huella',     icono: '🌍', vista: vistaHuella },
   { id: 'aire',      etiqueta: 'Aire',       icono: '💨', vista: vistaAire },
   { id: 'ranking',   etiqueta: 'Ranking',    icono: '🏆', vista: vistaRanking },
   { id: 'nube',      etiqueta: 'Nube y grupos', icono: '☁️', vista: vistaNube },
   { separador: true },
   { id: 'ciencia',   etiqueta: 'Ciencia',    icono: '🔬', vista: vistaCiencia },
-  { id: 'perfil',    etiqueta: 'Perfil',     icono: '⚙️', vista: vistaPerfil, movil: true },
+  { id: 'perfil',    etiqueta: 'Perfil',     icono: '⚙️', vista: vistaPerfil },
 ];
 
 export function iniciar(raiz) {
@@ -91,8 +91,15 @@ export function iniciar(raiz) {
       ]),
     ]));
 
+    // El menu inferior lleva TODAS las vistas y se desplaza en horizontal.
+    // Antes solo mostraba cinco, asi que en el movil habia siete pantallas
+    // —entre ellas la nube y los grupos— a las que no habia forma de llegar.
     inferior.innerHTML = '';
-    for (const r of RUTAS.filter((x) => x.movil)) inferior.appendChild(botonNav(r, true));
+    for (const r of RUTAS.filter((x) => !x.separador)) inferior.appendChild(botonNav(r, true));
+    // Deja siempre a la vista la pestana activa, aunque este fuera de pantalla.
+    requestAnimationFrame(() => {
+      inferior.querySelector('.nav-item.activo')?.scrollIntoView({ inline: 'center', block: 'nearest' });
+    });
   }
 
   function pintar() {

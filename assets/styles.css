@@ -286,11 +286,20 @@ tr.destacada td { background: rgba(52, 211, 153, 0.09); font-weight: 650; }
     display: flex; position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
     background: rgba(5, 9, 15, 0.96); backdrop-filter: blur(18px);
     border-top: 1px solid var(--borde); padding: 7px 4px calc(7px + env(safe-area-inset-bottom));
-    justify-content: space-around;
+    /* Doce vistas no caben en una pantalla de movil: la barra se desplaza en
+       horizontal en vez de esconder la mitad de la aplicacion. */
+    justify-content: flex-start; gap: 2px;
+    overflow-x: auto; overflow-y: hidden;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
   }
+  .nav-inferior::-webkit-scrollbar { display: none; }
   .nav-inferior .nav-item {
+    flex: 0 0 auto; width: 66px;
     flex-direction: column; gap: 2px; padding: 6px 3px; font-size: 9.5px;
     box-shadow: none !important; border-radius: var(--radio-xs); text-align: center; font-weight: 600;
+    scroll-snap-align: center;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .nav-inferior .nav-item.activo { background: var(--superficie-2); color: var(--verde); }
   .nav-inferior .nav-item .ico { font-size: 19px; width: auto; }
