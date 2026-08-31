@@ -62,12 +62,18 @@ perfiles y registros hay, útil para confirmar que la sincronización llegó.
 
 **Project Settings** (el engranaje) → **API**. Necesitas dos cosas:
 
-| Campo | Dónde aparece |
+**Project Settings** → **API Keys**. Necesitas dos cosas:
+
+| Campo | Aspecto |
 |---|---|
 | **Project URL** | `https://xxxxxxxxxxxx.supabase.co` |
-| **anon public** | Una clave larga que empieza por `eyJ...` |
+| **Publishable key** | `sb_publishable_...` |
 
-> ⚠️ **Nunca uses la clave `service_role`.** Esa salta todas las políticas de
+Supabase migró de las claves JWT (`eyJ...`) al formato `sb_publishable_...`. Si
+tu proyecto todavía muestra la antigua **anon public**, también sirve: la app
+admite los dos formatos.
+
+> ⚠️ **Nunca uses la clave secreta** (`sb_secret_...` o `service_role`). Esa salta todas las políticas de
 > seguridad y daría control total a cualquiera que abriese la consola del
 > navegador. La `anon public` está diseñada para vivir en el cliente: no es un
 > secreto, y lo que protege los datos son las políticas RLS.

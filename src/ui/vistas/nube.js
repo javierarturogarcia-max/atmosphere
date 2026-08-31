@@ -28,18 +28,18 @@ export function vistaNube(ctx) {
 // ---------------------------------------------------------------- paso 1
 function paso1Configurar(cuerpo, repintar) {
   const url = el('input', { type: 'url', placeholder: 'https://xxxxxxxx.supabase.co' });
-  const clave = el('input', { type: 'password', placeholder: 'Clave anon public' });
+  const clave = el('input', { type: 'password', placeholder: 'sb_publishable_... (o eyJ... si es antigua)' });
 
   cuerpo.appendChild(el('div', { clase: 'tarjeta seccion' }, [
     el('h2', { texto: '1. Conecta tu proyecto de Supabase' }),
     el('ol', { estilo: 'margin:0 0 15px 19px;font-size:13px;color:var(--texto-2);line-height:1.9' }, [
       el('li', { texto: 'Crea una cuenta gratuita en supabase.com y un proyecto nuevo.' }),
       el('li', { texto: 'Abre SQL Editor, pega el contenido de db/esquema.sql del repositorio y pulsa Run.' }),
-      el('li', { texto: 'Ve a Project Settings → API y copia la URL del proyecto y la clave "anon public".' }),
+      el('li', { texto: 'Ve a Project Settings → API Keys y copia la URL del proyecto y la "Publishable key" (empieza por sb_publishable_). Si tu proyecto aun usa el formato antiguo, es la clave "anon public" que empieza por eyJ.' }),
     ]),
     el('div', { clase: 'col' }, [
       el('label', { clase: 'campo' }, ['URL del proyecto', url]),
-      el('label', { clase: 'campo' }, ['Clave anonima (anon public)', clave]),
+      el('label', { clase: 'campo' }, ['Clave publica (Publishable key)', clave]),
       el('button', {
         clase: 'btn primario', texto: 'Conectar',
         onclick: () => {
@@ -55,7 +55,7 @@ function paso1Configurar(cuerpo, repintar) {
     ]),
     el('div', { clase: 'aviso info', estilo: 'margin-top:15px' }, [
       el('span', { texto: '🔑' }),
-      el('div', { texto: 'La clave "anon public" esta pensada para vivir en el navegador: no es un secreto. Lo que protege los datos son las politicas de seguridad por fila del esquema, no ocultar la clave. Nunca pegues aqui la clave "service_role".' }),
+      el('div', { texto: 'La clave publica esta pensada para vivir en el navegador: no es un secreto. Lo que protege los datos son las politicas de seguridad por fila del esquema, no ocultar la clave. La clave SECRETA (sb_secret_ o service_role) no se acepta aqui: la app la detecta y la rechaza, porque publicarla daria control total de tu base de datos.' }),
     ]),
   ]));
 }

@@ -2,20 +2,68 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   configurar, configuracion, estaConfigurada, desconectar, olvidarTodo,
-  pendientesDeSubir, aFilaRegistro, enLotes, situarEnRanking, generarCodigo, ErrorNube,
+  pendientesDeSubir, aFilaRegistro, enLotes, situarEnRanking, generarCodigo,
+  esClaveSecreta, ErrorNube,
 } from '../src/core/nube.js';
 import { generador } from '../src/core/rng.js';
 
-test('la configuracion valida la forma de la URL y de la clave', () => {
-  assert.throws(() => configurar({ url: 'http://inseguro.supabase.co', anonKey: 'x'.repeat(50) }), ErrorNube);
-  assert.throws(() => configurar({ url: 'https://ejemplo.com', anonKey: 'x'.repeat(50) }), ErrorNube);
-  assert.throws(() => configurar({ url: 'https://abc.supabase.co', anonKey: 'corta' }), ErrorNube);
-  const r = configurar({ url: 'https://abcdefg.supabase.co/', anonKey: 'k'.repeat(60) });
+const PUBLICA = 'sb_publishable_mU-ALe_ht0qx84oWwvGEnQ_rBMzXRu0';
+/** JWT de juguete con rol service_role, para probar el rechazo. */
+const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+const JWT_SERVICIO = `eyJhbGciOiJIUzI1NiJ9.${b64({ role: 'service_role' })}.firma`;
+const JWT_ANON = `eyJhbGciOiJIUzI1NiJ9.${b64({ role: 'anon' })}.firma`;
+
+test('la configuracion valida la forma de la URL', () => {
+  assert.throws(() => configurar({ url: 'http://inseguro.supabase.co', anonKey: PUBLICA }), ErrorNube);
+  assert.throws(() => configurar({ url: 'https://ejemplo.com', anonKey: PUBLICA }), ErrorNube);
+  const r = configurar({ url: 'https://abcdefg.supabase.co/', anonKey: PUBLICA });
   assert.equal(r.url, 'https://abcdefg.supabase.co', 'quita la barra final');
   assert.equal(estaConfigurada(), true);
-  assert.equal(configuracion().anonKey.length, 60);
   olvidarTodo();
-  assert.equal(estaConfigurada(), false);
+});
+
+test('admite los dos formatos de clave publica que conviven', () => {
+  assert.equal(configurar({ url: 'https://a.supabase.co', anonKey: PUBLICA }).formato, 'publishable');
+  assert.equal(configurar({ url: 'https://a.supabase.co', anonKey: JWT_ANON }).formato, 'anon-jwt');
+  olvidarTodo();
+});
+
+test('RECHAZA una clave secreta en los dos formatos', () => {
+  // Es el fallo mas grave posible: la clave secreta salta todas las politicas RLS.
+  assert.equal(esClaveSecreta('sb_secret_abc123'), 'formato nuevo (sb_secret_)');
+  assert.equal(esClaveSecreta(JWT_SERVICIO), 'JWT con rol service_role');
+  assert.equal(esClaveSecreta(PUBLICA), null);
+  assert.equal(esClaveSecreta(JWT_ANON), null);
+
+  for (const mala of ['sb_secret_mU-ALe_ht0qx84oWwvGEnQ', JWT_SERVICIO]) {
+    assert.throws(
+      () => configurar({ url: 'https://a.supabase.co', anonKey: mala }),
+      (e) => e instanceof ErrorNube && e.codigo === 'clave_secreta' && /SECRETA/.test(e.message),
+      `deberia rechazar ${mala.slice(0, 20)}`);
+  }
+  assert.equal(estaConfigurada(), false, 'una clave secreta nunca se guarda');
+});
+
+test('corrige la clave pegada dos veces seguidas', () => {
+  const r = configurar({ url: 'https://a.supabase.co', anonKey: PUBLICA + PUBLICA });
+  assert.equal(r.formato, 'publishable');
+  assert.equal(configuracion().anonKey, PUBLICA, 'guarda una sola copia');
+  olvidarTodo();
+});
+
+test('ignora espacios y saltos de linea al pegar', () => {
+  configurar({ url: 'https://a.supabase.co', anonKey: `  ${PUBLICA}\n ` });
+  assert.equal(configuracion().anonKey, PUBLICA);
+  olvidarTodo();
+});
+
+test('rechaza cualquier cosa que no sea una clave reconocible', () => {
+  for (const basura of ['corta', 'x'.repeat(60), 'https://a.supabase.co', '']) {
+    assert.throws(
+      () => configurar({ url: 'https://a.supabase.co', anonKey: basura }),
+      (e) => e instanceof ErrorNube && e.codigo === 'clave',
+      `deberia rechazar ${JSON.stringify(basura.slice(0, 15))}`);
+  }
 });
 
 test('solo se suben los registros que faltan', () => {
@@ -122,7 +170,7 @@ test('sin configuracion, las operaciones fallan con un codigo claro', async () =
 });
 
 test('desconectar borra la sesion pero conserva la configuracion', () => {
-  configurar({ url: 'https://proj.supabase.co', anonKey: 'k'.repeat(60) });
+  configurar({ url: 'https://proj.supabase.co', anonKey: PUBLICA });
   desconectar();
   assert.equal(estaConfigurada(), true, 'la URL del proyecto se conserva para volver a entrar');
   olvidarTodo();

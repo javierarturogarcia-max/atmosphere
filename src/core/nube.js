@@ -45,16 +45,68 @@ export class ErrorNube extends Error {
 
 // ============================================================== configuracion
 
-/** Guarda la URL del proyecto y la clave anonima. */
+/**
+ * Detecta una clave SECRETA pegada por error donde va la publica.
+ *
+ * Es el error mas grave posible en esta pantalla: la clave secreta salta TODAS
+ * las politicas de seguridad por fila, asi que publicarla en un sitio estatico
+ * daria control total de la base a cualquiera que abra el codigo fuente.
+ * Se comprueban las dos formas que existen: el prefijo del formato nuevo y el
+ * rol dentro del JWT del formato antiguo.
+ */
+export function esClaveSecreta(clave) {
+  const k = String(clave || '');
+  if (/^sb_secret_/i.test(k)) return 'formato nuevo (sb_secret_)';
+  const partes = k.split('.');
+  if (partes.length === 3) {
+    try {
+      const carga = JSON.parse(atob(partes[1].replace(/-/g, '+').replace(/_/g, '/')));
+      if (carga?.role === 'service_role') return 'JWT con rol service_role';
+    } catch { /* no es un JWT legible */ }
+  }
+  return null;
+}
+
+/**
+ * Guarda la URL del proyecto y la clave publica.
+ *
+ * Se admiten los dos formatos que convivien: el nuevo `sb_publishable_...` y el
+ * antiguo JWT `eyJ...` (la clave "anon"), que Supabase mantiene por
+ * compatibilidad. Ambos son publicos por diseno: viven en el navegador y lo que
+ * protege los datos son las politicas RLS, no ocultar la clave.
+ */
 export function configurar({ url, anonKey }) {
   const u = String(url || '').trim().replace(/\/+$/, '');
-  const k = String(anonKey || '').trim();
+  let k = String(anonKey || '').trim().replace(/\s+/g, '');
+
   if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(u)) {
     throw new ErrorNube('La URL debe tener la forma https://xxxxx.supabase.co', 'url');
   }
-  if (k.length < 40) throw new ErrorNube('La clave anonima no parece valida.', 'clave');
+
+  const secreta = esClaveSecreta(k);
+  if (secreta) {
+    throw new ErrorNube(
+      `Eso es una clave SECRETA (${secreta}), no la publica. Publicarla daria control total `
+      + 'de tu base de datos a cualquiera. Usa la "Publishable key" de Settings -> API Keys.',
+      'clave_secreta');
+  }
+
+  // Pegar la clave dos veces seguidas es un accidente frecuente al copiar.
+  if (k.length % 2 === 0 && k.length > 20 && k.slice(0, k.length / 2) === k.slice(k.length / 2)) {
+    k = k.slice(0, k.length / 2);
+  }
+
+  const esNueva = /^sb_publishable_[A-Za-z0-9_-]{10,}$/.test(k);
+  const esJWT = /^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(k);
+  if (!esNueva && !esJWT) {
+    throw new ErrorNube(
+      'La clave no tiene un formato reconocible. Debe empezar por "sb_publishable_" '
+      + '(formato actual) o por "eyJ" (clave anon antigua).',
+      'clave');
+  }
+
   guardarJSON(CLAVE_CONFIG, { url: u, anonKey: k });
-  return { url: u };
+  return { url: u, formato: esNueva ? 'publishable' : 'anon-jwt' };
 }
 
 export function configuracion() { return leerJSON(CLAVE_CONFIG, null); }
@@ -79,6 +131,11 @@ async function llamar(ruta, { metodo = 'GET', cuerpo = null, autenticado = true,
   if (!cfg) throw new ErrorNube('La nube no esta configurada.', 'sin_configurar');
 
   const s = sesion();
+  // La clave publica va SOLO en la cabecera `apikey`. Las claves del formato
+  // nuevo no son JWT, asi que mandarlas tambien como `Authorization: Bearer`
+  // —cosa que hacen muchos clientes por defecto— haria que el servidor
+  // intentase interpretarlas como JWT y rechazase la peticion con "Invalid JWT".
+  // En `Authorization` solo viaja el token de sesion del usuario.
   const h = {
     apikey: cfg.anonKey,
     'Content-Type': 'application/json',
