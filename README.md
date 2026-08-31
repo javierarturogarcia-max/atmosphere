@@ -1,7 +1,5 @@
 # 🌍 Atmosphere
 
-**https://atmosphereapp.me**
-
 **Plataforma gamificada de acción climática con motor de impacto científico, analítica estadística avanzada y sistema de recompensas.**
 
 Atmosphere convierte lo que ya haces bien por el planeta en **impacto físico medido** —kg de CO₂e, litros de agua, kg de residuo desviado— y, a partir de ahí, en progresión de juego. No al revés. Esa inversión del orden habitual es la decisión de diseño central del proyecto.
@@ -145,8 +143,8 @@ activarlo una sola vez:
 
 **Settings → Pages → Build and deployment → Source: _GitHub Actions_**
 
-Cada `push` a la rama publica automáticamente en
-`https://atmosphereapp.me`.
+A partir de ahí, cada `push` a la rama publica automáticamente en
+`https://<usuario>.github.io/atmosphere/`.
 
 ### Alternativas equivalentes
 
