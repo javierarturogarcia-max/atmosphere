@@ -38,6 +38,24 @@ vistas, las 10 políticas de seguridad y los 3 disparadores.
 Si vuelves a ejecutarlo no pasa nada: el guion es idempotente (`create table if
 not exists`, `drop policy if exists`).
 
+### Comprobar que quedó bien instalado
+
+Pega también [`db/verificar.sql`](verificar.sql) en una consulta nueva y pulsa
+**Run**. Devuelve una tabla de 12 filas que deben salir todas en `OK`:
+
+| bloque | comprobacion | estado |
+|---|---|---|
+| Tablas | Las 4 tablas existen | OK |
+| Seguridad | RLS activada en las 4 tablas | OK |
+| Antifraude | El cliente NO puede escribir puntos, xp ni nivel | OK |
+| … | | |
+
+No modifica nada: solo lee el catálogo del sistema. Si alguna sale `MAL`,
+vuelve a ejecutar `esquema.sql` entero — es idempotente y se puede repetir.
+
+Las dos últimas filas son informativas, no comprobaciones: te dicen cuántos
+perfiles y registros hay, útil para confirmar que la sincronización llegó.
+
 ---
 
 ## 3 · Copiar las credenciales (1 min)

@@ -9,7 +9,7 @@
     "build": "node tools/build.mjs",
     "dev": "node tools/servidor.mjs",
     "verify": "npm test && npm run test:db && npm run build",
-    "test:db": "node tools/probar-esquema.mjs"
+    "test:db": "node tools/probar-esquema.mjs && node tools/probar-verificador.mjs"
   },
   "engines": {
     "node": ">=20"
