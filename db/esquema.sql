@@ -145,13 +145,34 @@ create policy "salirme de un grupo" on public.miembros
   for delete using (auth.uid() = perfil_id);
 
 -- -----------------------------------------------------------------------------
--- 5. LA PIEZA CLAVE: permisos por columna
+-- 5. LA PIEZA CLAVE: permisos, uno por politica y ni uno mas
 -- -----------------------------------------------------------------------------
--- Aunque la politica RLS permita actualizar el perfil propio, estos permisos
--- impiden que el cliente escriba las columnas de puntuacion. Puede cambiar su
--- nombre, su pais y si aparece en el ranking. Nada mas.
-revoke update on public.perfiles from authenticated;
-grant  update (nombre, pais, publico) on public.perfiles to authenticated;
+-- REVOCAR PRIMERO. Todo proyecto de Supabase trae puesto "alter default
+-- privileges in schema public grant all on tables to anon, authenticated", de
+-- modo que cada tabla y cada vista creada aqui NACE con todos los permisos
+-- concedidos. Un grant es aditivo y no quita nada, asi que sin este revoke
+-- quedaban permisos de UPDATE colgando sobre registros —la tabla que es
+-- append-only— y sobre grupos, miembros y las tres vistas.
+--
+-- Hoy la RLS los deja en nada, porque un comando sin politica no afecta a
+-- ninguna fila. Pero es la capa de defensa que sobra hasta el dia en que
+-- alguien anada una politica de UPDATE para cualquier cosa razonable, y ese
+-- dia el permiso olvidado se convierte en el agujero. El principio de toda
+-- esta base es el mismo: que el permiso no exista, en vez de confiar en que
+-- nadie lo use.
+revoke all on public.perfiles, public.registros, public.grupos, public.miembros
+  from anon, authenticated;
+-- A partir de aqui, exactamente un permiso por cada politica de mas arriba.
+-- Las vistas se tratan igual, pero mas abajo: aqui todavia no existen.
+grant select, insert on public.perfiles  to authenticated;  -- + update por columna, abajo
+grant select, insert on public.registros to authenticated;  -- append-only: sin update ni delete
+grant select, insert on public.grupos    to authenticated;
+grant select, insert, delete on public.miembros to authenticated;  -- se puede salir del grupo
+-- Y la pieza que impide inflar la puntuacion: aunque la politica RLS permita
+-- actualizar el perfil propio, estos permisos dejan fuera las columnas de
+-- puntuacion. Se puede cambiar el nombre, el pais y si se aparece en el
+-- ranking. Nada mas.
+grant update (nombre, pais, publico) on public.perfiles to authenticated;
 
 -- -----------------------------------------------------------------------------
 -- 6. RECALCULO SERVIDOR: los totales se DERIVAN, no se declaran
@@ -254,6 +275,13 @@ with (security_invoker = true) as
          sum(registros_n)::int as acciones
     from public.perfiles
    where publico = true;
+
+-- Mismo motivo que en la seccion 5: las vistas tambien nacen con todos los
+-- permisos concedidos, y son de solo lectura por definicion.
+revoke all on public.ranking_global, public.ranking_grupos, public.impacto_comunidad
+  from anon, authenticated;
+grant select on public.ranking_global, public.ranking_grupos, public.impacto_comunidad
+  to authenticated;
 
 -- -----------------------------------------------------------------------------
 -- 8. ALTA AUTOMATICA DE PERFIL AL REGISTRARSE

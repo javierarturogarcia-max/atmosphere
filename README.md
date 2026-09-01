@@ -28,7 +28,7 @@ La mayoría de las apps de sostenibilidad fallan por una de estas tres razones:
 
 **Sistema de juego** — XP con curva superlineal, 10 rangos, 47 insignias evaluadas por predicados puros, misiones diarias/semanales/mensuales generadas de forma determinista, rachas con congelaciones, 6 ligas, 16 recompensas canjeables.
 
-**Sincronización opcional en la nube** — Postgres (Supabase) con seguridad por fila, grupos por clase o centro, y ranking con personas reales. Desactivada por defecto: la app funciona entera sin cuenta. **El cliente nunca escribe su propia puntuación** — solo inserta registros inmutables, y el servidor deriva los totales con un disparador. El esquema se verifica contra un PostgreSQL real con `npm run test:db` (30 comprobaciones del núcleo + 19 de la capa social). Puesta en marcha en [`db/INSTALACION.md`](db/INSTALACION.md).
+**Sincronización opcional en la nube** — Postgres (Supabase) con seguridad por fila, grupos por clase o centro, y ranking con personas reales. Desactivada por defecto: la app funciona entera sin cuenta. **El cliente nunca escribe su propia puntuación** — solo inserta registros inmutables, y el servidor deriva los totales con un disparador. El esquema se verifica contra un PostgreSQL real con `npm run test:db` (30 comprobaciones del núcleo + 20 de la capa social). Puesta en marcha en [`db/INSTALACION.md`](db/INSTALACION.md).
 
 **Analítica** — regresión OLS y Theil-Sen, test de tendencia de Mann-Kendall con corrección por empates, media móvil, EWMA, bootstrap, índices de Shannon/Pielou/Gini, perfiles circadiano y semanal, mapa de calor de constancia.
 
@@ -63,8 +63,8 @@ El aura **no se mezcla con los puntos**: los puntos son impacto físico, el aura
 
 ```bash
 npm run dev      # servidor local en http://localhost:4173
-npm test         # 161 pruebas del motor
-npm run test:db  # ejecuta el SQL contra un PostgreSQL real (PGlite): 30 + 19 comprobaciones
+npm test         # 164 pruebas del motor
+npm run test:db  # ejecuta el SQL contra un PostgreSQL real (PGlite): 30 + 20 comprobaciones
 npm run build    # genera dist/atmosphere.html (un solo archivo, sin dependencias)
 npm run verify   # pruebas + esquema + build
 ```
@@ -144,7 +144,7 @@ subcarpeta de proyecto.
 
 ### GitHub Pages (configurado en este repositorio)
 
-El flujo de trabajo `.github/workflows/pages.yml` ejecuta las 161 pruebas,
+El flujo de trabajo `.github/workflows/pages.yml` ejecuta las 164 pruebas,
 comprueba que `dist/` no esté desfasado respecto a `src/` y publica. Para
 activarlo una sola vez:
 

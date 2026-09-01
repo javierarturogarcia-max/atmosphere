@@ -419,6 +419,43 @@ que sostienen la capa social son políticas de PostgreSQL:
 El doble me gusta lo impide la clave primaria compuesta `(publicacion_id,
 perfil_id)`, no un `if`.
 
+### El permiso que se concede solo
+
+Hay un detalle de Supabase que convierte en falso todo lo anterior si no se
+conoce. Cada proyecto trae puesta esta línea:
+
+```sql
+alter default privileges in schema public grant all on tables to anon, authenticated;
+```
+
+Es decir: **toda tabla o vista que se cree en `public` nace con todos los
+permisos concedidos**, `UPDATE` incluido. Y un `grant` es aditivo: escribir
+`grant select, insert, delete` no quita el `update` que ya estaba. Hay que
+revocar primero.
+
+Este proyecto no lo hacía, y la consecuencia fue exactamente la que cabía
+esperar: `authenticated` conservaba permiso de `UPDATE` sobre `likes_n`, sobre
+`oculto`, y sobre las catorce columnas de `registros` —la tabla que se
+describe a sí misma como *append-only*—.
+
+No llegó a ser explotable, y eso también merece decirse con precisión: la RLS
+no tiene ninguna política de `UPDATE` sobre esas tablas, y en PostgreSQL un
+comando sin política no afecta a ninguna fila. Se comprobó intentándolo. Pero
+la defensa que quedaba era una sola, y el día en que alguien añada una política
+de `UPDATE` por un motivo razonable —permitir editar la descripción de una
+publicación, pongamos— el permiso olvidado se convierte en el agujero, sin que
+nada avise.
+
+Ahora los dos guiones revocan antes de conceder, y `db/verificar.sql` vigila el
+esquema **entero**, no una tabla concreta: cualquier `UPDATE` que aparezca
+fuera de las cuatro columnas inocuas del perfil sale en `MAL`, incluso en una
+tabla que se añada en el futuro.
+
+La lección de método es la que más vale: el simulacro de pruebas modelaba que
+las tablas de Supabase *existían*, pero no los privilegios por defecto ni de
+quién eran. Un simulacro que se parece al original en lo que miras y no en lo
+que olvidas mirar da luz verde a los fallos que más importan.
+
 ### Moderación sin moderadores
 
 **Tres reportes de tres personas distintas** ocultan una publicación

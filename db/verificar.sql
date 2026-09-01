@@ -117,6 +117,23 @@ with comprobaciones as (
      and grantee = 'authenticated' and privilege_type = 'UPDATE'
      and column_name in ('puntos','xp','nivel','co2e_total','agua_total','residuo_total','registros_n','dias_activos','aura')
 
+  -- 7bis. Ningun permiso de escritura suelto en todo el esquema -------------
+  -- Supabase concede TODO sobre cada tabla nueva de public por privilegios por
+  -- defecto, asi que los guiones tienen que revocar antes de conceder. Esta
+  -- fila vigila el esquema entero, no una tabla concreta: es la que detecta un
+  -- UPDATE olvidado en una tabla que se anada manana.
+  union all
+  select 10.5, 'Antifraude',
+         'Ningun UPDATE suelto en el resto del esquema',
+         count(*) = 0,
+         case when count(*) = 0 then 'solo el perfil es actualizable, y por columnas'
+              else 'PERMISO INDEBIDO sobre ' || string_agg(distinct table_name::text, ', ') end
+    from information_schema.column_privileges
+   where table_schema = 'public' and grantee in ('anon','authenticated')
+     and privilege_type = 'UPDATE'
+     and not (table_name = 'perfiles'
+              and column_name::text in ('nombre','pais','publico','mote'))
+
   -- 8. Estado de los datos --------------------------------------------------
   union all
   select 11, 'Datos',

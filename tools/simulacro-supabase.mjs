@@ -36,6 +36,13 @@ end $$;
 
 grant usage on schema public to anon, authenticated;
 
+-- ESTO ES IMPORTANTE Y SE NOS PASO UNA VEZ. Todo proyecto de Supabase trae
+-- puesta esta linea, de modo que cada tabla o vista creada en public NACE con
+-- todos los permisos concedidos a anon y authenticated. Sin ella el simulacro
+-- daba por buenos unos esquemas que en Supabase dejaban permisos de UPDATE
+-- colgando, porque aqui las tablas nacian sin ningun permiso.
+alter default privileges in schema public grant all on tables to anon, authenticated;
+
 -- Trozo minimo del esquema storage, suficiente para db/social.sql.
 create schema if not exists storage;
 

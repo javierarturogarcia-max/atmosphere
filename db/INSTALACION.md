@@ -1,6 +1,6 @@
 # Poner la base de datos en marcha
 
-El esquema está escrito y **verificado contra un PostgreSQL real** (49
+El esquema está escrito y **verificado contra un PostgreSQL real** (50
 comprobaciones, ver `npm run test:db`). Lo único que falta es tu proyecto de
 Supabase, porque crear una cuenta a tu nombre no lo puede hacer nadie más.
 
@@ -41,7 +41,7 @@ not exists`, `drop policy if exists`).
 ### Comprobar que quedó bien instalado
 
 Pega también [`db/verificar.sql`](verificar.sql) en una consulta nueva y pulsa
-**Run**. Devuelve una tabla de 17 filas:
+**Run**. Devuelve una tabla de 18 filas:
 
 | bloque | comprobacion | estado |
 |---|---|---|
@@ -223,6 +223,23 @@ pertenencias a grupos.
 
 ---
 
+## Si ya lo habías instalado antes
+
+Las versiones anteriores de `esquema.sql` y `social.sql` no revocaban los
+privilegios por defecto de Supabase, así que dejaban permisos de `UPDATE`
+colgando sobre tablas que no debían tenerlos. Si tu verificación muestra
+`MAL` en alguna fila de antifraude, se arregla **reejecutando los dos guiones**
+en orden — son idempotentes:
+
+1. **SQL Editor** → pega `db/esquema.sql` entero → **Run**
+2. **SQL Editor** → pega `db/social.sql` entero → **Run**
+3. Pega `db/verificar.sql` → todas las filas deben salir en `OK`
+
+No se pierde ningún dato: `create table if not exists` respeta lo que ya
+existe, y lo único que cambia son los permisos.
+
+---
+
 ## Comprobarlo sin Supabase
 
 ```bash
@@ -235,10 +252,11 @@ Postgres compilado a WebAssembly) simulando las piezas que aporta Supabase.
 - **30 comprobaciones del núcleo**: que los disparadores recalculan bien, que el
   tope diario rechaza, que los permisos por columna son los que deben ser, y que
   la curva de nivel del servidor coincide con la del cliente.
-- **19 comprobaciones de la capa social**: que el autolike se rechaza, que el
+- **20 comprobaciones de la capa social**: que el autolike se rechaza, que el
   doble me gusta lo impide la clave primaria, que nadie escribe su propia aura
-  ni infla `likes_n`, que tres reportes ocultan una publicación y el aura cae, y
-  que cada quien solo puede subir archivos a su propia carpeta.
+  ni infla `likes_n`, que tres reportes ocultan una publicación y el aura cae,
+  que cada quien solo puede subir archivos a su propia carpeta, y que un error
+  de permisos en el almacén no deshace el resto del guion.
 
 Las pruebas de seguridad hacen `set role authenticated` antes de intentar el
 abuso: como superusuario, PostgreSQL salta las políticas RLS y las

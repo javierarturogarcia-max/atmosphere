@@ -134,6 +134,20 @@ drop policy if exists "ver mis reportes" on public.reportes;
 create policy "ver mis reportes" on public.reportes
   for select using (perfil_id = auth.uid());
 
+-- REVOCAR PRIMERO, CONCEDER DESPUES. Todo proyecto de Supabase trae puesto
+-- "alter default privileges in schema public grant all on tables to anon,
+-- authenticated", asi que cada tabla nueva NACE con todos los permisos
+-- concedidos, UPDATE incluido. Un grant es aditivo: no quita nada. Sin este
+-- revoke, authenticated conservaba permiso de UPDATE sobre likes_n y oculto.
+--
+-- Hoy no bastaria para hacer trampa —publicaciones no tiene ninguna politica
+-- de UPDATE, asi que la RLS deja el intento en cero filas— pero es la capa de
+-- defensa que sobra hasta el dia en que alguien anada una politica de UPDATE
+-- para, por ejemplo, poder editar la descripcion. Ese dia el permiso olvidado
+-- se convierte en el agujero. El principio es el mismo que en esquema.sql: que
+-- el permiso no exista, en vez de confiar en que nadie lo use.
+revoke all on public.publicaciones, public.megusta, public.reportes from anon, authenticated;
+
 grant select, insert, delete on public.publicaciones to authenticated;
 grant select, insert, delete on public.megusta to authenticated;
 grant select, insert on public.reportes to authenticated;
@@ -280,6 +294,11 @@ with (security_invoker = true) as
      and creado > now() - interval '7 days'
    order by likes_n desc, creado desc
    limit 12;
+
+-- Mismo motivo que arriba: las vistas tambien nacen con todos los permisos
+-- concedidos. Son de solo lectura por definicion, asi que solo select.
+revoke all on public.muro, public.virales from anon, authenticated;
+grant select on public.muro, public.virales to authenticated;
 
 -- -----------------------------------------------------------------------------
 -- 6. ALMACEN DE VIDEOS Y FOTOS (Supabase Storage)
