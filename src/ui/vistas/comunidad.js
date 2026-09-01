@@ -1,5 +1,5 @@
 /** comunidad.js — Muro de buenas acciones: clips cortos, me gusta y aura. */
-import { el, num, co2, toast, modal, vacio, esc, tarjetaMetrica } from '../componentes.js';
+import { el, num, co2, toast, modal, vacio, esc, tarjetaMetrica, logoMutuu } from '../componentes.js';
 import * as social from '../../core/social.js';
 import * as api from '../../core/nube.js';
 import { accion, CATEGORIAS } from '../../data/acciones.js';
@@ -21,7 +21,7 @@ export function vistaComunidad(ctx) {
     cuerpo.innerHTML = '';
     if (!api.haySesion()) {
       cuerpo.appendChild(el('div', { clase: 'tarjeta centrado' }, [
-        el('div', { estilo: 'font-size:44px', texto: '🌍' }),
+        logoMutuu(52),
         el('h2', { estilo: 'margin:11px 0 5px', texto: 'Únete para entrar en la comunidad' }),
         el('p', { clase: 'mini', estilo: 'margin-bottom:15px' },
           ['El muro necesita cuenta: es lo unico de la app que no puede funcionar solo en tu dispositivo. Se tarda menos de un minuto.']),

@@ -315,3 +315,63 @@ export function vacio(icono, titulo, texto = '') {
     texto ? el('div', { clase: 'mini', estilo: 'margin-top:5px', texto }) : null,
   ]);
 }
+
+/**
+ * Marca de mutu_u: prisma hexagonal con su anillo orbital.
+ *
+ * Va como SVG y no como imagen a proposito. La aplicacion se empaqueta en un
+ * unico archivo HTML sin recursos externos, asi que un PNG habria que
+ * incrustarlo en base64: cientos de kilobytes para un hueco de 28 px en la
+ * barra lateral, y borroso en pantallas densas. Este vector pesa un kilobyte,
+ * se ve nitido de 20 px a 200 px y hereda los colores del tema.
+ *
+ * @param {number} tamano lado en pixeles
+ * @param {string} [clase] clase CSS adicional
+ */
+export function logoMutuu(tamano = 28, clase = '') {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 100 100');
+  svg.setAttribute('width', String(tamano));
+  svg.setAttribute('height', String(tamano));
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', 'mutu_u');
+  if (clase) svg.setAttribute('class', clase);
+
+  // Identificadores unicos: puede haber varios logos en la misma pagina y los
+  // id de un <defs> son globales. Sin esto, el segundo logo reutilizaria los
+  // degradados del primero y bastaria quitar uno para romper los demas.
+  const uid = `mu${Math.random().toString(36).slice(2, 8)}`;
+  svg.innerHTML = `
+    <defs>
+      <linearGradient id="${uid}c" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%"   stop-color="#7dd3fc"/>
+        <stop offset="45%"  stop-color="#22d3ee"/>
+        <stop offset="100%" stop-color="#a78bfa"/>
+      </linearGradient>
+      <linearGradient id="${uid}i" x1="0" y1="1" x2="1" y2="0">
+        <stop offset="0%"   stop-color="#0e7490"/>
+        <stop offset="55%"  stop-color="#0c4a6e"/>
+        <stop offset="100%" stop-color="#1e3a8a"/>
+      </linearGradient>
+      <radialGradient id="${uid}g">
+        <stop offset="0%"   stop-color="#22d3ee" stop-opacity=".38"/>
+        <stop offset="100%" stop-color="#22d3ee" stop-opacity="0"/>
+      </radialGradient>
+    </defs>
+
+    <circle cx="50" cy="50" r="46" fill="url(#${uid}g)"/>
+    <circle cx="50" cy="50" r="43" fill="none" stroke="#38bdf8" stroke-opacity=".28" stroke-width="1"/>
+    <circle cx="50" cy="50" r="30" fill="none" stroke="#22d3ee" stroke-opacity=".55" stroke-width="2"
+            stroke-dasharray="112 76" stroke-linecap="round" transform="rotate(-28 50 50)"/>
+    <path d="M26 68a28 28 0 0 0 48 0" fill="none" stroke="#fb923c" stroke-opacity=".75"
+          stroke-width="2.4" stroke-linecap="round"/>
+
+    <path d="M84 50 67 79.4H33L16 50l17-29.4h34z" fill="url(#${uid}i)"
+          stroke="url(#${uid}c)" stroke-width="3" stroke-linejoin="round"/>
+    <g stroke="#bae6fd" stroke-opacity=".85" stroke-width="1.8" stroke-linecap="round">
+      <path d="M50 50 84 50M50 50 33 79.4M50 50 33 20.6"/>
+    </g>
+    <circle cx="50" cy="50" r="3.4" fill="#e0f2fe"/>`;
+  return svg;
+}

@@ -1,7 +1,7 @@
 /**
  * app.js — Carcasa de la aplicacion: navegacion, enrutado y arranque.
  */
-import { el, toast, modal, num } from './componentes.js';
+import { el, toast, modal, num, logoMutuu } from './componentes.js';
 import { crearAlmacen, cargar, estadoInicial } from '../core/estado.js';
 import { paisesOrdenados } from '../data/paises.js';
 import { vistaPanel } from './vistas/panel.js';
@@ -83,10 +83,10 @@ export function iniciar(raiz) {
   function pintarNav() {
     lateral.innerHTML = '';
     lateral.appendChild(el('div', { clase: 'marca' }, [
-      el('span', { clase: 'marca-icono', texto: '🌍' }),
+      logoMutuu(30, 'marca-icono'),
       el('div', {}, [
         el('div', { clase: 'marca-texto', html: 'Atmos<span>phere</span>' }),
-        el('div', { clase: 'marca-sub', texto: 'Accion climatica' }),
+        el('div', { clase: 'marca-sub', texto: 'mutu_u' }),
       ]),
     ]));
     for (const r of RUTAS) {
@@ -159,7 +159,7 @@ export function ajusteLocal(ctx) {
 
   const cerrar = modal(el('div', {}, [
     el('div', { clase: 'centrado', estilo: 'margin-bottom:19px' }, [
-      el('div', { estilo: 'font-size:52px', texto: '🌍' }),
+      logoMutuu(56),
       el('h2', { estilo: 'margin:9px 0 5px', texto: 'Empecemos' }),
       el('p', { clase: 'mini' },
         ['Convierte lo que ya haces bien por el planeta en impacto medido y en progreso visible. Cada accion se traduce a kilos de CO2e, litros de agua y kilos de residuo con factores cientificos citados.']),

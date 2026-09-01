@@ -10,7 +10,7 @@
  * se elige un mote y se entra. La configuracion tecnica sigue existiendo, pero
  * en Perfil y para quien la necesite.
  */
-import { el, toast, esc } from '../componentes.js';
+import { el, toast, esc, logoMutuu } from '../componentes.js';
 import * as api from '../../core/nube.js';
 import * as social from '../../core/social.js';
 import { paisesOrdenados } from '../../data/paises.js';
@@ -89,7 +89,7 @@ function portada(ctx, ir) {
   const caja = el('div');
 
   caja.appendChild(el('div', { clase: 'tarjeta centrado hero-bienvenida' }, [
-    el('div', { estilo: 'font-size:60px;line-height:1', texto: '🌍' }),
+    logoMutuu(72),
     el('h1', { estilo: 'margin:14px 0 6px;font-size:30px', texto: 'Bienvenida a Atmosphere' }),
     el('p', { clase: 'sub', estilo: 'max-width:44ch;margin:0 auto 20px' },
       ['Convierte lo que ya haces bien por el planeta en impacto medido — y en algo que se comparte.']),

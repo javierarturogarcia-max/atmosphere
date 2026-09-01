@@ -1,5 +1,5 @@
 {
-  "name": "Atmosphere — Accion climatica gamificada",
+  "name": "Atmosphere — mutu_u",
   "short_name": "Atmosphere",
   "description": "Convierte tus habitos sostenibles en impacto ambiental medido, con base cientifica, analitica avanzada y recompensas.",
   "start_url": "./index.html",
@@ -12,7 +12,7 @@
   "categories": ["education", "lifestyle", "health", "productivity"],
   "icons": [
     {
-      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='96' fill='%2305090f'/%3E%3Ctext x='256' y='360' font-size='300' text-anchor='middle'%3E%F0%9F%8C%8D%3C/text%3E%3C/svg%3E",
+      "src": "data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%20100%20100%27%3E%3Crect%20width%3D%27100%27%20height%3D%27100%27%20rx%3D%2719%27%20fill%3D%27%2305090f%27%2F%3E%3Ccircle%20cx%3D%2750%27%20cy%3D%2750%27%20r%3D%2730%27%20fill%3D%27none%27%20stroke%3D%27%2322d3ee%27%20stroke-opacity%3D%27.6%27%20stroke-width%3D%272.6%27%20stroke-dasharray%3D%27112%2076%27%20stroke-linecap%3D%27round%27%20transform%3D%27rotate%28-28%2050%2050%29%27%2F%3E%3Cpath%20d%3D%27M84%2050%2067%2079.4H33L16%2050l17-29.4h34z%27%20fill%3D%27none%27%20stroke%3D%27%237dd3fc%27%20stroke-width%3D%273.4%27%20stroke-linejoin%3D%27round%27%2F%3E%3Cpath%20d%3D%27M26%2068a28%2028%200%200%200%2048%200%27%20fill%3D%27none%27%20stroke%3D%27%23fb923c%27%20stroke-opacity%3D%27.75%27%20stroke-width%3D%272.4%27%20stroke-linecap%3D%27round%27%2F%3E%3Cpath%20d%3D%27M50%2050%2084%2050M50%2050%2033%2079.4M50%2050%2033%2020.6%27%20stroke%3D%27%23e0f2fe%27%20stroke-opacity%3D%27.7%27%20stroke-width%3D%271.8%27%20stroke-linecap%3D%27round%27%2F%3E%3Ccircle%20cx%3D%2750%27%20cy%3D%2750%27%20r%3D%273.4%27%20fill%3D%27%23e0f2fe%27%2F%3E%3C%2Fsvg%3E",
       "sizes": "512x512",
       "type": "image/svg+xml",
       "purpose": "any maskable"
