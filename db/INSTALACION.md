@@ -92,14 +92,47 @@ Si prefieres **no** tener capa social, sáltate este paso: la app detecta que la
 tablas no existen y la pestaña 🎬 Comunidad se queda inactiva. Todo lo demás
 funciona igual.
 
-### El almacén de vídeos
+### El almacén de vídeos (esto casi seguro lo tendrás que hacer a mano)
 
-`social.sql` intenta crear el cubo `evidencias` automáticamente. Si tu proyecto
-no lo permite desde SQL, sale un aviso y se crea a mano en un minuto:
+`social.sql` intenta crear el cubo y sus políticas, pero **en la mayoría de
+proyectos no puede**: la tabla `storage.objects` pertenece a
+`supabase_storage_admin`, no al rol con el que corre el editor SQL, así que
+crear políticas sobre ella da *«must be owner of table objects»*.
 
-**Storage** → **New bucket** → nombre `evidencias`, marca **Public bucket**,
-*File size limit* `25 MB`. Las políticas de acceso las pone igualmente el
-guion.
+El guion lo tiene previsto: esa parte va en un bloque que captura el error,
+avisa por **NOTICE** y sigue. Mira el panel *Results* / *Logs* debajo de la
+consulta — si aparece una línea que empieza por `ATMOSPHERE:`, te dice
+exactamente qué faltó.
+
+> Esto es también la razón de que el guion no sea un simple `create policy`
+> suelto: el editor SQL de Supabase ejecuta **todo lo que le pegas como una
+> sola transacción**, así que un error al final deshace todo lo de arriba y la
+> instalación queda vacía, aparentando que nunca se ejecutó.
+
+**1 · El cubo.** Storage → **New bucket**:
+
+- *Name*: `evidencias`
+- **Public bucket**: marcado
+- *File size limit*: `25 MB`
+
+**2 · Las tres políticas.** Storage → **Policies** → sobre el cubo
+`evidencias` → **New policy** → *For full customization*. Crea estas tres:
+
+| Nombre | Operación | Rol | Expresión |
+|---|---|---|---|
+| `leer evidencias` | SELECT | `public` | `bucket_id = 'evidencias'` |
+| `subir a mi carpeta` | INSERT | `authenticated` | `bucket_id = 'evidencias' and (storage.foldername(name))[1] = auth.uid()::text` |
+| `borrar lo mio del almacen` | DELETE | `authenticated` | `bucket_id = 'evidencias' and (storage.foldername(name))[1] = auth.uid()::text` |
+
+En INSERT la expresión va en **WITH CHECK**; en SELECT y DELETE, en **USING**.
+
+La de INSERT es la que importa: `storage.foldername('<uuid>/video.webm')`
+devuelve `{<uuid>}`, así que compararlo con `auth.uid()` impide escribir en la
+carpeta de otra persona. Sin ella, cualquiera podría subir archivos al nombre
+de quien quisiera.
+
+**Cómo saber si faltan:** la app te lo dice. Al publicar, si falta el cubo el
+mensaje nombra *New bucket*; si faltan las políticas, nombra *Policies*.
 
 El plan gratuito incluye **1 GB** de almacenamiento: entre 300 y 900 vídeos
 cortos. Suficiente para un aula durante un curso.

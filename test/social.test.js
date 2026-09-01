@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  validarMote, extensionDe, rutaMedio, urlMedio, auraDe, haceRato, AURA, CUBO, LIMITE_MB,
+  validarMote, extensionDe, rutaMedio, urlMedio, auraDe, haceRato,
+  diagnosticoAlmacen, AURA, CUBO, LIMITE_MB,
 } from '../src/core/social.js';
 import { configurar, olvidarTodo } from '../src/core/nube.js';
 
@@ -91,4 +92,27 @@ test('haceRato produce etiquetas cortas y legibles', () => {
 test('los limites publicos son coherentes', () => {
   assert.ok(LIMITE_MB > 0 && LIMITE_MB <= 50);
   assert.equal(CUBO, 'evidencias');
+});
+
+// Los dos fallos de instalacion que de verdad ocurren: el guion de la base de
+// datos omite el cubo o sus politicas cuando el rol del editor SQL no es dueno
+// de storage.objects, y entonces publicar falla. El mensaje tiene que decir
+// que hacer, no devolver el codigo HTTP.
+test('el diagnostico del almacen nombra el cubo que falta', () => {
+  const m = diagnosticoAlmacen(404, '{"error":"Bucket not found"}');
+  assert.match(m, /New bucket/);
+  assert.match(m, /evidencias/);
+});
+
+test('el diagnostico distingue cubo ausente de politicas ausentes', () => {
+  const sinCubo = diagnosticoAlmacen(404, 'Bucket not found');
+  const sinPolitica = diagnosticoAlmacen(400, 'new row violates row-level security policy');
+  assert.match(sinPolitica, /Policies/);
+  assert.notEqual(sinCubo, sinPolitica);
+});
+
+test('lo que el diagnostico no reconoce conserva el codigo y el texto', () => {
+  const m = diagnosticoAlmacen(507, 'Insufficient Storage');
+  assert.match(m, /507/);
+  assert.match(m, /Insufficient Storage/);
 });

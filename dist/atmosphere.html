@@ -8177,9 +8177,35 @@ async function subirMedio(blob) {
   }
   if (!res.ok) {
     const texto = await res.text().catch(() => '');
-    throw new ErrorNube(`El almacen rechazo el archivo (${res.status}). ${texto.slice(0, 120)}`, 'almacen');
+    throw new ErrorNube(diagnosticoAlmacen(res.status, texto), 'almacen');
   }
   return ruta;
+}
+
+/**
+ * Traduce el rechazo del almacen a algo que se pueda arreglar.
+ *
+ * Los dos fallos habituales no son del codigo sino de la instalacion, porque
+ * el guion de la base de datos omite el cubo o sus politicas cuando el rol del
+ * editor SQL no es dueno de storage.objects. Sin este mensaje, lo que ve la
+ * persona es un numero y un texto en ingles del servidor.
+ *
+ * @param {number} estado codigo HTTP
+ * @param {string} texto cuerpo de la respuesta
+ * @returns {string} mensaje con el siguiente paso concreto
+ */
+function diagnosticoAlmacen(estado, texto) {
+  const t = String(texto || '').toLowerCase();
+  if (estado === 404 || t.includes('bucket not found')) {
+    return 'Falta el cubo "evidencias" en tu proyecto. Crealo en Supabase: '
+         + 'Storage -> New bucket -> nombre "evidencias", marca Public bucket.';
+  }
+  if (estado === 403 || estado === 400 || t.includes('row-level security') || t.includes('unauthorized')) {
+    return 'El almacen existe pero le faltan las politicas de acceso. '
+         + 'Ponlas en Supabase: Storage -> Policies sobre el cubo "evidencias" '
+         + '(estan copiadas en db/INSTALACION.md).';
+  }
+  return `El almacen rechazo el archivo (${estado}). ${String(texto || '').slice(0, 120)}`;
 }
 
 /**
@@ -8314,6 +8340,7 @@ function haceRato(iso) {
   __exp.rutaMedio = rutaMedio;
   __exp.urlMedio = urlMedio;
   __exp.subirMedio = subirMedio;
+  __exp.diagnosticoAlmacen = diagnosticoAlmacen;
   __exp.publicar = publicar;
   __exp.borrarPublicacion = borrarPublicacion;
   __exp.muro = muro;

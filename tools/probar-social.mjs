@@ -179,6 +179,53 @@ await prueba('cada quien solo escribe dentro de su carpeta', async () => {
   throw new Error('Luis escribio en la carpeta de Ana');
 });
 
+console.log('\n── 8. Instalacion en un proyecto real (sin ser dueno de storage.objects) ──');
+// Esta seccion existe por un fallo real en produccion. El editor SQL de
+// Supabase ejecuta todo el guion como UNA transaccion, y en la mayoria de
+// proyectos storage.objects pertenece a supabase_storage_admin, no al rol del
+// editor. Crear politicas sobre ella fallaba con "must be owner of table
+// objects" y ese error deshacia el guion ENTERO: ni tablas del muro, ni
+// columna mote. La verificacion salia como si nunca se hubiera ejecutado.
+//
+// Las pruebas de arriba no lo veian porque corren como superusuario, que se
+// salta la comprobacion de propiedad. Aqui se reproduce el caso: un rol que
+// posee lo suyo en public pero NO storage.objects, y todo en una transaccion.
+await prueba('un error de permisos en el almacen no tumba el resto del guion', async () => {
+  const otra = await baseSimulada();
+  await otra.exec(readFileSync('db/esquema.sql', 'utf8'));
+
+  // El rol del editor SQL: dueno de lo que hay en public, ajeno a storage.
+  await otra.exec(`
+    create role editor_sql;
+    grant usage, create on schema public to editor_sql;
+    grant usage on schema auth, storage to editor_sql;
+    grant select, insert on storage.buckets to editor_sql;
+    grant select, references on public.registros to editor_sql;
+    alter table public.perfiles owner to editor_sql;
+  `);
+
+  // Una sola llamada = una sola transaccion implicita, como el editor.
+  await otra.exec(`set role editor_sql;\n${readFileSync('db/social.sql', 'utf8')}`);
+  await otra.exec('reset role;');
+
+  const hay = async (sql) => Number((await otra.query(sql)).rows[0].n);
+  const tablas = await hay(`select count(*)::int as n from pg_tables
+                             where schemaname='public'
+                               and tablename in ('publicaciones','megusta','reportes')`);
+  const mote = await hay(`select count(*)::int as n from information_schema.columns
+                           where table_schema='public' and table_name='perfiles'
+                             and column_name='mote'`);
+  const politicas = await hay(`select count(*)::int as n from pg_policies
+                                where schemaname='storage' and tablename='objects'`);
+  await otra.close();
+
+  if (tablas !== 3) throw new Error(`la transaccion se deshizo: solo ${tablas}/3 tablas del muro`);
+  if (mote !== 1) throw new Error('la columna mote no sobrevivio a la transaccion');
+  // Que las politicas NO esten es lo esperado aqui: el bloque las omitio y
+  // aviso por NOTICE. Si estuvieran, la prueba no estaria probando nada.
+  if (politicas !== 0) throw new Error('el rol pudo crear politicas: la prueba no reproduce el caso');
+});
+
 console.log(`\n${'═'.repeat(62)}`);
 if (fallos.length) { console.log(`RESULTADO: ${fallos.length} fallo(s)`); process.exit(1); }
 console.log('RESULTADO: la capa social cierra todos sus candados ✅');

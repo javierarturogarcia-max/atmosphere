@@ -287,20 +287,44 @@ with (security_invoker = true) as
 -- Cubo publico de solo lectura: lo que se publica en el muro es, por decision
 -- explicita de su autor, visible para la comunidad. Cada quien solo puede
 -- escribir dentro de su propia carpeta (su uuid) y borrar lo suyo.
-insert into storage.buckets (id, name, public)
-values ('evidencias', 'evidencias', true)
-on conflict (id) do nothing;
+--
+-- OJO CON LA TRANSACCION. El editor SQL de Supabase ejecuta todo lo que se
+-- le pega como UNA SOLA transaccion, asi que un error aqui abajo no se queda
+-- aqui abajo: deshace tambien las tablas del muro y hasta la columna mote de
+-- mas arriba, y la instalacion queda en nada aparentando que no se ejecuto.
+--
+-- Y hay un error muy probable: en la mayoria de proyectos storage.objects
+-- pertenece a supabase_storage_admin, no al rol del editor SQL, de modo que
+-- crear politicas sobre ella falla con "must be owner of table objects".
+--
+-- Por eso cada parte va en su bloque con captura de excepcion. PL/pgSQL
+-- deshace solo lo de dentro del bloque, avisa por NOTICE y el guion continua:
+-- lo que no se pueda hacer desde aqui se hace a mano en dos minutos, pero el
+-- resto de la capa social queda instalado.
+do $$
+begin
+  insert into storage.buckets (id, name, public, file_size_limit)
+  values ('evidencias', 'evidencias', true, 26214400)
+  on conflict (id) do nothing;
+exception when insufficient_privilege or undefined_table or undefined_column then
+  raise notice 'ATMOSPHERE: no se pudo crear el cubo (%). Hazlo a mano: Storage -> New bucket -> nombre "evidencias", marca Public bucket, limite 25 MB.', sqlerrm;
+end $$;
 
-drop policy if exists "subir a mi carpeta" on storage.objects;
-create policy "subir a mi carpeta" on storage.objects
-  for insert to authenticated
-  with check (bucket_id = 'evidencias' and (storage.foldername(name))[1] = auth.uid()::text);
+do $$
+begin
+  drop policy if exists "subir a mi carpeta" on storage.objects;
+  create policy "subir a mi carpeta" on storage.objects
+    for insert to authenticated
+    with check (bucket_id = 'evidencias' and (storage.foldername(name))[1] = auth.uid()::text);
 
-drop policy if exists "borrar lo mio del almacen" on storage.objects;
-create policy "borrar lo mio del almacen" on storage.objects
-  for delete to authenticated
-  using (bucket_id = 'evidencias' and (storage.foldername(name))[1] = auth.uid()::text);
+  drop policy if exists "borrar lo mio del almacen" on storage.objects;
+  create policy "borrar lo mio del almacen" on storage.objects
+    for delete to authenticated
+    using (bucket_id = 'evidencias' and (storage.foldername(name))[1] = auth.uid()::text);
 
-drop policy if exists "leer evidencias" on storage.objects;
-create policy "leer evidencias" on storage.objects
-  for select using (bucket_id = 'evidencias');
+  drop policy if exists "leer evidencias" on storage.objects;
+  create policy "leer evidencias" on storage.objects
+    for select using (bucket_id = 'evidencias');
+exception when insufficient_privilege or undefined_table then
+  raise notice 'ATMOSPHERE: no se pudieron crear las politicas del almacen (%). Ponlas desde Storage -> Policies sobre el cubo evidencias; estan copiadas en db/INSTALACION.md. Sin ellas el muro se ve, pero al publicar da error de permisos.', sqlerrm;
+end $$;
