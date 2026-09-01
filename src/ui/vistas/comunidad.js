@@ -47,7 +47,7 @@ async function pintarMuro(cuerpo, ctx, repintar) {
   const intentar = async (fn, q) => { try { return await fn(); } catch (e) { errores.push(`${q}: ${e.message}`); return null; } };
 
   const perfil = await intentar(api.miPerfil, 'perfil');
-  const gustadas = (await intentar(social.misMeGusta, 'me gusta')) || new Set();
+  const gustadas = (await intentar(social.misReacciones, 'reacciones')) || new Map();
   const publicaciones = (await intentar(
     () => (pestana === 'virales' ? social.virales() : social.muro(30)), 'muro')) || [];
   cargando.remove();
@@ -96,7 +96,7 @@ async function pintarMuro(cuerpo, ctx, repintar) {
       'Publica tu primera accion y se la primera persona del muro'));
   } else {
     cuerpo.appendChild(el('div', { clase: 'rejilla ancha' },
-      publicaciones.map((p) => tarjetaPublicacion(p, gustadas.has(p.id), ctx, repintar))));
+      publicaciones.map((p) => tarjetaPublicacion(p, gustadas.get(p.id) || null, ctx, repintar))));
   }
 
   cuerpo.appendChild(el('div', { clase: 'aviso info', estilo: 'margin-top:20px' }, [
@@ -105,35 +105,77 @@ async function pintarMuro(cuerpo, ctx, repintar) {
   ]));
 }
 
-function tarjetaPublicacion(p, meGusta, ctx, repintar) {
+function tarjetaPublicacion(p, reaccionMia, ctx, repintar) {
+  let meGusta = reaccionMia;
   const a = accion(p.accion_id);
   const cat = CATEGORIAS[p.categoria];
   const url = social.urlMedio(p.ruta_medio);
   const nivel = NIVELES_EVIDENCIA[p.nivel_evidencia];
   const mio = p.perfil_id === api.sesion()?.perfilId;
 
+  // `meGusta` llega como el TIPO de reaccion o null: una persona reacciona una
+  // sola vez a cada publicacion y elige el matiz.
   const contador = el('span', { clase: 'mono', texto: String(p.likes_n ?? 0) });
+  const cara = el('span', { texto: meGusta ? social.reaccion(meGusta).icono : '🤍' });
   const boton = el('button', {
     clase: `chip${meGusta ? ' activo' : ''}`,
     estilo: mio ? 'opacity:.45;cursor:not-allowed' : '',
-    title: mio ? 'No puedes darte me gusta a ti' : 'Me gusta',
-  }, [el('span', { texto: meGusta ? '💚' : '🤍' }), contador]);
+    title: mio ? 'No puedes reaccionar a lo tuyo' : 'Reacciona (manten pulsado para elegir)',
+  }, [cara, contador]);
 
   if (!mio) {
     let ocupado = false;
-    boton.addEventListener('click', async () => {
+    const aplicar = async (tipo) => {
       if (ocupado) return;
       ocupado = true;
       const antes = meGusta;
       try {
-        meGusta = await social.alternarMeGusta(p.id, antes);
-        p.likes_n = Math.max(0, (p.likes_n ?? 0) + (meGusta ? 1 : -1));
-        contador.textContent = String(p.likes_n);
+        meGusta = await social.aplicarReaccion(p.id, antes, tipo);
+        // El contador solo cambia al entrar o salir; cambiar de matiz no suma.
+        if (!antes && meGusta) p.likes_n = (p.likes_n ?? 0) + 1;
+        if (antes && !meGusta) p.likes_n = Math.max(0, (p.likes_n ?? 0) - 1);
+        contador.textContent = String(p.likes_n ?? 0);
         boton.className = `chip${meGusta ? ' activo' : ''}`;
-        boton.firstChild.textContent = meGusta ? '💚' : '🤍';
+        cara.textContent = meGusta ? social.reaccion(meGusta).icono : '🤍';
       } catch (e) {
-        toast({ titulo: 'No se pudo registrar el me gusta', texto: e.message, tipo: 'error', icono: '⛔' });
+        toast({ titulo: 'No se pudo registrar la reaccion', texto: e.message, tipo: 'error', icono: '⛔' });
       } finally { ocupado = false; }
+    };
+
+    // Pulsar da la reaccion por defecto; mantener pulsado abre el abanico. Es
+    // el gesto que la gente ya conoce de otras aplicaciones, y deja el caso
+    // frecuente en un solo toque.
+    let abanico = null;
+    // Soltar tras una pulsacion larga dispara un `click`. Sin tragarselo, ese
+    // click cerraba el abanico en el mismo instante en que se abria y nadie
+    // llegaba a verlo.
+    let tragarClic = false;
+    const cerrarAbanico = () => { abanico?.remove(); abanico = null; };
+    const abrirAbanico = () => {
+      if (abanico) return;
+      tragarClic = true;
+      abanico = el('div', { clase: 'abanico' }, social.REACCIONES.map((r) => el('button', {
+        clase: `abanico-op${meGusta === r.tipo ? ' activo' : ''}`,
+        title: r.etiqueta, texto: r.icono,
+        onclick: (ev) => { ev.stopPropagation(); cerrarAbanico(); aplicar(r.tipo); },
+      })));
+      (boton.closest('.ancla-reaccion') || boton.parentElement).appendChild(abanico);
+      // Se espera a que pase el click de soltar antes de escuchar el de fuera.
+      setTimeout(() => document.addEventListener('click', cerrarAbanico, { once: true }), 350);
+    };
+
+    let temporizador = null;
+    const empezar = () => { temporizador = setTimeout(abrirAbanico, 420); };
+    const soltar = () => { clearTimeout(temporizador); };
+    boton.addEventListener('pointerdown', empezar);
+    boton.addEventListener('pointerup', soltar);
+    boton.addEventListener('pointerleave', soltar);
+    boton.addEventListener('contextmenu', (ev) => { ev.preventDefault(); abrirAbanico(); });
+    boton.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (tragarClic) { tragarClic = false; return; }
+      if (abanico) { cerrarAbanico(); return; }
+      aplicar(meGusta || 'me_gusta');
     });
   }
 
@@ -190,7 +232,7 @@ function tarjetaPublicacion(p, meGusta, ctx, repintar) {
       el('div', { clase: 'fila entre', estilo: 'padding-top:9px;border-top:1px solid var(--borde)' }, [
         el('span', { clase: 'mono mini', estilo: 'color:var(--verde)', texto: `${co2(p.co2e || 0)} evitados` }),
         el('div', { clase: 'fila', estilo: 'gap:5px' }, [
-          boton,
+          el('span', { clase: 'ancla-reaccion' }, [boton]),
           mio
             ? el('button', { clase: 'chip', texto: '🗑️', title: 'Borrar mi publicacion',
               onclick: async () => {

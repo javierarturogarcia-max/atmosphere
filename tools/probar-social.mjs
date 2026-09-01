@@ -162,6 +162,49 @@ await prueba('pero su autor si sigue viendola (para poder borrarla)', () => como
   if (n !== 1) throw new Error(`Ana ve ${n} publicaciones`);
 }));
 
+console.log('\n── 5bis. Reacciones ──');
+await prueba('se puede cambiar de reaccion sin reaccionar dos veces', async () => {
+  const pub = (await db.query(
+    `select id from public.publicaciones where perfil_id = '${ANA}' limit 1`)).rows[0].id;
+  await como(LUIS, () => db.exec(
+    `insert into public.megusta (publicacion_id, perfil_id, tipo)
+     values ('${pub}','${LUIS}','me_gusta')
+     on conflict (publicacion_id, perfil_id) do update set tipo = excluded.tipo`));
+  await como(LUIS, () => db.exec(
+    `update public.megusta set tipo = 'corazon'
+      where publicacion_id = '${pub}' and perfil_id = '${LUIS}'`));
+  await db.exec('reset role;');
+  const f = (await db.query(
+    `select count(*)::int as n, max(tipo) as t, max(likes_n) as l
+       from public.megusta m join public.publicaciones p on p.id = m.publicacion_id
+      where m.publicacion_id = '${pub}'`)).rows[0];
+  if (Number(f.n) !== 1) throw new Error(`${f.n} filas: se reacciono dos veces`);
+  if (f.t !== 'corazon') throw new Error(`el tipo quedo en ${f.t}`);
+  if (Number(f.l) !== 1) throw new Error(`likes_n = ${f.l}: cambiar de reaccion no debe sumar otra`);
+});
+
+await prueba('un tipo de reaccion inventado se rechaza', async () => {
+  const pub = (await db.query(
+    `select id from public.publicaciones where perfil_id = '${ANA}' limit 1`)).rows[0].id;
+  try {
+    await como(LUIS, () => db.exec(
+      `update public.megusta set tipo = 'trofeo_de_oro'
+        where publicacion_id = '${pub}' and perfil_id = '${LUIS}'`));
+  } catch { return; }
+  throw new Error('acepto un tipo fuera de la lista');
+});
+
+await prueba('nadie puede mover su reaccion a otra publicacion', async () => {
+  // El GRANT solo alcanza la columna del tipo: publicacion_id y perfil_id
+  // siguen siendo inmutables, asi que una reaccion no se puede reasignar.
+  await db.exec('reset role;');
+  const cols = (await db.query(`
+    select column_name::text as c from information_schema.column_privileges
+     where table_name='megusta' and grantee='authenticated' and privilege_type='UPDATE'
+     order by 1`)).rows.map((r) => r.c);
+  if (cols.join(',') !== 'tipo') throw new Error(`escribible: ${cols.join(', ') || '(nada)'}`);
+});
+
 console.log('\n── 6bis. El escaparate de la portada ──');
 // La funcion se ve SIN cuenta, asi que lo que devuelve es lo unico que este
 // proyecto ensena a un desconocido. Que no se cuele un perfil privado.

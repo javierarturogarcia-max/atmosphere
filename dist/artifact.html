@@ -357,6 +357,39 @@ tr.destacada td { background: rgba(52, 211, 153, 0.09); font-weight: 650; }
   .btn.grande { width: 100%; }
 }
 
+/* ── Camara en la app ────────────────────────────────────────────────────── */
+.camara-marco {
+  position: relative; border-radius: var(--radio); overflow: hidden;
+  background: #000; aspect-ratio: 3 / 4; margin-bottom: 12px;
+}
+.camara-previa { width: 100%; height: 100%; object-fit: cover; display: block; }
+.camara-contador {
+  position: absolute; top: 10px; right: 12px;
+  min-width: 34px; padding: 4px 9px; border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55); color: #fff;
+  font-family: var(--mono); font-weight: 700; font-size: 15px; text-align: center;
+  backdrop-filter: blur(6px);
+}
+.camara-contador:empty { display: none; }
+
+/* ── Abanico de reacciones ───────────────────────────────────────────────── */
+.ancla-reaccion { position: relative; display: inline-flex; }
+.abanico {
+  position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 30;
+  display: flex; gap: 4px; padding: 6px;
+  background: var(--fondo-2); border: 1px solid var(--borde-fuerte);
+  border-radius: 999px; box-shadow: var(--sombra);
+  animation: abanico-entra 140ms cubic-bezier(0.2, 1.3, 0.5, 1);
+}
+@keyframes abanico-entra { from { opacity: 0; transform: translateY(6px) scale(0.94); } }
+.abanico-op {
+  border: none; background: none; cursor: pointer;
+  font-size: 21px; line-height: 1; padding: 5px 6px; border-radius: 999px;
+  transition: transform 120ms ease, background 120ms ease;
+}
+.abanico-op:hover { transform: scale(1.28); background: var(--superficie-2); }
+.abanico-op.activo { background: var(--superficie-2); box-shadow: inset 0 0 0 1.5px var(--verde); }
+
 </style>
 <div id="app">
   <div style="display:flex;align-items:center;justify-content:center;min-height:70vh;flex-direction:column;gap:14px">
@@ -3192,6 +3225,7 @@ const NIVELES_EVIDENCIA = Object.freeze({
   fechada:     { factor: 1.25, etiqueta: 'Evidencia fechada',          color: '#38bdf8' },
   situada:     { factor: 1.40, etiqueta: 'Evidencia fechada y situada', color: '#34d399' },
   video:       { factor: 1.45, etiqueta: 'Video verificado',           color: '#c084fc' },
+  envivo:      { factor: 1.60, etiqueta: 'Grabado en vivo',            color: '#22d3ee' },
   sospechosa:  { factor: 1.00, etiqueta: 'Evidencia no valida',        color: '#f87171' },
 });
 
@@ -3277,6 +3311,23 @@ function evaluarEvidencia(p = {}) {
 
   if (!tipo) {
     return { nivel: 'ninguna', ...NIVELES_EVIDENCIA.ninguna, motivos: ['No se adjunto ninguna prueba.'], sospecha: 0, duplicado: null };
+  }
+
+  // --- Grabado dentro de la app: el nivel mas alto y el mas simple ---------
+  // Todo lo demas de esta funcion existe porque un archivo puede venir de
+  // cualquier sitio: se leen metadatos, se compara la fecha, se busca la copia.
+  // Cuando la propia aplicacion abrio la camara y grabo, no hubo archivo previo
+  // que elegir. No hay nada que deducir, y por eso vale mas que cualquier
+  // heuristica: no es una pista sobre el origen, es el origen.
+  if (p.enVivo) {
+    const m = ['Grabado dentro de la app: no se pudo elegir de la galeria.'];
+    if (p.movimiento?.regimen && p.movimiento.regimen !== 'desconocido') {
+      m.push(`El sensor midio: ${p.movimiento.etiqueta.toLowerCase()}. ${p.movimiento.motivo}`);
+    }
+    return {
+      nivel: 'envivo', ...NIVELES_EVIDENCIA.envivo, motivos: m, sospecha: 0, duplicado: null,
+      detalle: { fechada: true, situada: false, tieneExif: false, tipo: p.tipo, enVivo: true },
+    };
   }
 
   // --- Duplicado: descalifica antes que nada -------------------------------
@@ -5294,6 +5345,498 @@ function metadatosTraza(texto) {
   __exp.metadatosTraza = metadatosTraza;
 });
 
+__def("src/core/cadencia.js", function (__exp, __req) {
+/**
+ * cadencia.js — Que dice el acelerometro sobre lo que estabas haciendo.
+ *
+ * QUE VALIDA ESTO Y QUE NO. Un acelerometro ve MOVIMIENTO, no intenciones ni
+ * objetos. Puede distinguir con bastante fiabilidad estar quieto de caminar y
+ * caminar de correr, porque son regimenes de cadencia y de intensidad muy
+ * separados. No puede saber si la botella es de plastico o de vidrio, ni si
+ * bebiste agua. Cualquier sistema que diga lo contrario esta adivinando, y este
+ * proyecto prefiere declarar lo que no sabe.
+ *
+ * COMO. Se muestrea el modulo de la aceleracion durante unos segundos mientras
+ * se graba la prueba. Se le quita la media —que es basicamente la gravedad y la
+ * orientacion del telefono, constantes en una ventana corta— y lo que queda es
+ * la oscilacion de los pasos. Contando picos con periodo refractario sale la
+ * cadencia; la RMS de la senal da la intensidad.
+ *
+ * RANGOS. Caminar humano se concentra en 90-130 pasos/min y correr en 150-190,
+ * con la marcha rapida y el trote lento solapandose alrededor de 140. La
+ * separacion no es un umbral limpio, asi que el solape se declara como
+ * 'indeterminado' en vez de inventar una respuesta.
+ *
+ * Todo son funciones puras sobre un vector de muestras: se prueban sin
+ * telefono, sin permisos y sin navegador.
+ */
+
+/**
+ * Regimenes de movimiento.
+ *
+ * MANDA LA CADENCIA, no la intensidad. La cadencia es la magnitud con
+ * significado fisico —cuantos pasos por minuto da una persona— y esta bien
+ * documentada: la marcha humana se concentra en 90-130 y la carrera en 150-190.
+ * La intensidad depende de donde lleves el telefono (mano, bolsillo, brazalete)
+ * y varia mucho mas entre personas, asi que solo se usa para CONFIRMAR, nunca
+ * para vetar: usarla como filtro dejaba sin clasificar a quien corre con el
+ * movil en un bolsillo ajustado.
+ */
+const REGIMENES = Object.freeze({
+  reposo:     { cadencia: [0, 40],    rmsTipica: [0, 0.8],  etiqueta: 'Quieto',    icono: '🧍' },
+  caminando:  { cadencia: [80, 135],  rmsTipica: [0.6, 7],  etiqueta: 'Caminando', icono: '🚶' },
+  corriendo:  { cadencia: [145, 220], rmsTipica: [2, 40],   etiqueta: 'Corriendo', icono: '🏃' },
+});
+
+/** Franja donde marcha rapida y trote lento son indistinguibles de verdad. */
+const FRANJA_AMBIGUA = Object.freeze([135, 145]);
+
+/** Periodo refractario entre pasos: 250 ms = tope de 240 pasos/min. */
+const REFRACTARIO_MS = 250;
+
+/** Muestras minimas para que el analisis signifique algo (~3 s a 50 Hz). */
+const MUESTRAS_MINIMAS = 150;
+
+/**
+ * Modulo de la aceleracion de cada muestra.
+ * @param {Array<{x:number,y:number,z:number}>} muestras
+ * @returns {number[]}
+ */
+function modulos(muestras) {
+  return (muestras || [])
+    .filter((m) => m && Number.isFinite(m.x) && Number.isFinite(m.y) && Number.isFinite(m.z))
+    .map((m) => Math.sqrt(m.x * m.x + m.y * m.y + m.z * m.z));
+}
+
+/** Media aritmetica; 0 si no hay datos. */
+function media(v) {
+  return v.length ? v.reduce((a, b) => a + b, 0) / v.length : 0;
+}
+
+/**
+ * Raiz del valor cuadratico medio de la senal SIN su media.
+ *
+ * Quitar la media es lo que separa "cuanto se mueve" de "hacia donde apunta el
+ * telefono": la gravedad aporta ~9,81 constantes que, sin restarlas, dominarian
+ * la medida y darian la misma intensidad quieto que corriendo.
+ */
+function intensidad(serie) {
+  if (!serie.length) return 0;
+  const m = media(serie);
+  return Math.sqrt(media(serie.map((x) => (x - m) ** 2)));
+}
+
+/**
+ * Instantes de los picos de la senal, con periodo refractario.
+ *
+ * Un paso produce un pico claro, pero el ruido produce muchos pequenos. Se
+ * exige superar la media mas media desviacion y respetar 250 ms desde el pico
+ * anterior: sin lo segundo, un solo paso con rebote se contaria dos o tres
+ * veces y la cadencia saldria al doble.
+ *
+ * @param {number[]} serie modulos
+ * @param {number[]} tiempos milisegundos de cada muestra
+ * @returns {number[]} instantes de los picos
+ */
+function picos(serie, tiempos) {
+  if (serie.length < 3) return [];
+  const m = media(serie);
+  const umbral = m + 0.5 * intensidad(serie);
+  const salida = [];
+  let ultimo = -Infinity;
+  for (let i = 1; i < serie.length - 1; i++) {
+    const esCumbre = serie[i] > serie[i - 1] && serie[i] >= serie[i + 1];
+    if (!esCumbre || serie[i] < umbral) continue;
+    const t = tiempos[i];
+    if (t - ultimo < REFRACTARIO_MS) continue;
+    salida.push(t);
+    ultimo = t;
+  }
+  return salida;
+}
+
+/**
+ * Regularidad del paso: 1 = metronomo, 0 = caotico.
+ *
+ * Es el coeficiente de variacion de los intervalos entre picos, invertido. Un
+ * humano caminando marca intervalos muy parejos; agitar el telefono en la mano
+ * para simular pasos no, y ahi es donde se nota. Sirve de confianza, no de
+ * veredicto: nadie queda descalificado por tener un paso irregular.
+ */
+function regularidad(instantes) {
+  if (instantes.length < 4) return 0;
+  const int = [];
+  for (let i = 1; i < instantes.length; i++) int.push(instantes[i] - instantes[i - 1]);
+  const m = media(int);
+  if (m <= 0) return 0;
+  const cv = Math.sqrt(media(int.map((x) => (x - m) ** 2))) / m;
+  return Math.max(0, Math.min(1, 1 - cv));
+}
+
+/**
+ * Analiza una ventana de muestras y dice que regimen de movimiento hubo.
+ *
+ * @param {Array<{x:number,y:number,z:number,t:number}>} muestras
+ * @returns {{regimen:string, cadencia:number, intensidad:number,
+ *            regularidad:number, confianza:number, segundos:number,
+ *            etiqueta:string, icono:string, motivo:string}}
+ */
+function analizarMovimiento(muestras) {
+  const buenas = (muestras || []).filter((m) => m && Number.isFinite(m.t));
+  const serie = modulos(buenas);
+  const tiempos = buenas.slice(0, serie.length).map((m) => m.t);
+  const segundos = tiempos.length > 1 ? (tiempos[tiempos.length - 1] - tiempos[0]) / 1000 : 0;
+
+  const vacio = (motivo) => ({
+    regimen: 'desconocido', cadencia: 0, intensidad: 0, regularidad: 0,
+    confianza: 0, segundos, etiqueta: 'Sin datos de movimiento', icono: '❔', motivo,
+  });
+
+  if (serie.length < MUESTRAS_MINIMAS || segundos < 2) {
+    return vacio('El sensor de movimiento dio muy pocas muestras.');
+  }
+
+  const rms = intensidad(serie);
+  const p = picos(serie, tiempos);
+  const cadencia = segundos > 0 ? (p.length / segundos) * 60 : 0;
+  const reg = regularidad(p);
+
+  const spm = Math.round(cadencia);
+  const enBanda = (nombre) => cadencia >= REGIMENES[nombre].cadencia[0]
+                           && cadencia <= REGIMENES[nombre].cadencia[1];
+
+  let regimen = 'indeterminado';
+  let motivo = '';
+  if (rms < REGIMENES.reposo.rmsTipica[1] && cadencia < REGIMENES.reposo.cadencia[1]) {
+    regimen = 'reposo';
+    motivo = 'Casi no hubo movimiento.';
+  } else if (cadencia > FRANJA_AMBIGUA[0] && cadencia < FRANJA_AMBIGUA[1]) {
+    // Marcha rapida y trote lento se parecen de verdad alrededor de 140 spm.
+    // Fingir certeza justo ahi seria el error mas facil de cometer.
+    motivo = `${spm} pasos por minuto: entre marcha rapida y trote.`;
+  } else if (enBanda('corriendo')) {
+    regimen = 'corriendo';
+    motivo = `${spm} pasos por minuto: ritmo de carrera.`;
+  } else if (enBanda('caminando')) {
+    regimen = 'caminando';
+    motivo = `${spm} pasos por minuto: ritmo de marcha.`;
+  } else {
+    motivo = `${spm} pasos por minuto: no encaja con caminar ni con correr.`;
+  }
+
+  // La intensidad no veta, pero si esta fuera de lo tipico del regimen se resta
+  // confianza: es la senal de un telefono en un sitio raro o de un movimiento
+  // que imita la cadencia sin serlo.
+  const tipica = REGIMENES[regimen]?.rmsTipica;
+  const rmsCoherente = !tipica || (rms >= tipica[0] && rms <= tipica[1]);
+
+  const conocido = regimen !== 'indeterminado' && regimen !== 'desconocido';
+  const etiqueta = REGIMENES[regimen]?.etiqueta || 'Movimiento no clasificable';
+  const icono = REGIMENES[regimen]?.icono || '❔';
+
+  // La confianza baja con el paso irregular y con las ventanas cortas: cuatro
+  // segundos dan una estimacion mucho mas fragil que doce.
+  const porTiempo = Math.min(1, segundos / 8);
+  const bruta = conocido
+    ? 0.30 + 0.45 * reg + 0.25 * porTiempo
+    : 0.30 * porTiempo;
+  const confianza = Math.round(100 * bruta * (rmsCoherente ? 1 : 0.6)) / 100;
+
+  return { regimen, cadencia, intensidad: rms, regularidad: reg, confianza, segundos, etiqueta, icono, motivo };
+}
+
+/**
+ * Contrasta lo que dice el sensor con lo que la persona declaro.
+ *
+ * NO SIRVE PARA DESCALIFICAR, y esa es la decision de diseno importante. Alguien
+ * puede reciclar de pie y quieto, grabar el video con el telefono en un tripode,
+ * o simplemente tener el sensor bloqueado por el navegador. Lo que hace es
+ * CONFIRMAR cuando el movimiento respalda la accion, que es lo unico que se
+ * puede afirmar con honestidad.
+ *
+ * @param {string} regimenEsperado 'caminando' | 'corriendo' | null
+ * @param {object} analisis salida de analizarMovimiento
+ */
+function contrastar(regimenEsperado, analisis) {
+  if (!regimenEsperado || !REGIMENES[regimenEsperado]) {
+    return { veredicto: 'no_aplica', texto: 'Esta accion no se comprueba con el movimiento.' };
+  }
+  if (!analisis || analisis.regimen === 'desconocido') {
+    return { veredicto: 'sin_datos', texto: 'No hubo datos de movimiento; la prueba vale igual.' };
+  }
+  if (analisis.regimen === regimenEsperado) {
+    return {
+      veredicto: 'confirma',
+      texto: `El movimiento concuerda: ${Math.round(analisis.cadencia)} pasos por minuto.`,
+    };
+  }
+  if (analisis.regimen === 'indeterminado') {
+    return { veredicto: 'ambiguo', texto: analisis.motivo };
+  }
+  return {
+    veredicto: 'discrepa',
+    texto: `Declaraste ${REGIMENES[regimenEsperado].etiqueta.toLowerCase()} y el sensor midio ${analisis.etiqueta.toLowerCase()}.`,
+  };
+}
+
+  __exp.REGIMENES = REGIMENES;
+  __exp.FRANJA_AMBIGUA = FRANJA_AMBIGUA;
+  __exp.REFRACTARIO_MS = REFRACTARIO_MS;
+  __exp.MUESTRAS_MINIMAS = MUESTRAS_MINIMAS;
+  __exp.modulos = modulos;
+  __exp.media = media;
+  __exp.intensidad = intensidad;
+  __exp.picos = picos;
+  __exp.regularidad = regularidad;
+  __exp.analizarMovimiento = analizarMovimiento;
+  __exp.contrastar = contrastar;
+});
+
+__def("src/ui/camara.js", function (__exp, __req) {
+/**
+ * camara.js — Grabar la prueba DENTRO de la app.
+ *
+ * DOS PROBLEMAS DE UNA VEZ.
+ *
+ * El primero es de comodidad: el atributo `capture` de un <input file> abre la
+ * camara en muchos moviles, pero no en todos —hay navegadores que muestran un
+ * selector igualmente— y en el escritorio no hace nada. Con getUserMedia la
+ * camara se abre siempre, en cualquier dispositivo con una.
+ *
+ * El segundo es de fondo, y es el que de verdad importa: si el archivo llega
+ * por un selector, puede venir de la galeria, de un grupo de mensajeria o de
+ * internet. Los metadatos EXIF ayudan, pero se editan con herramientas
+ * comunes. Cuando el video lo graba la propia aplicacion no hay archivo previo
+ * que elegir: la captura es la prueba. Eso es lo que distingue el sello "en
+ * vivo" de cualquier otro nivel de evidencia.
+ *
+ * Mientras graba, se muestrea el acelerometro. Con eso, correr o caminar se
+ * pueden CONFIRMAR (ver cadencia.js). Reciclar o beber agua no: ningun sensor
+ * ve eso, y la app no finge lo contrario.
+ */
+const { el, modal, toast } = __req("src/ui/componentes.js");
+const { analizarMovimiento } = __req("src/core/cadencia.js");
+
+/** Duracion por defecto de un clip. Suficiente para medir cadencia, corto de subir. */
+const SEGUNDOS_CLIP = 8;
+
+/** Formatos que pedimos al grabador, en orden de preferencia. */
+const FORMATOS = [
+  'video/mp4;codecs=avc1',      // Safari e iOS
+  'video/webm;codecs=vp9',
+  'video/webm;codecs=vp8',
+  'video/webm',
+  'video/mp4',
+];
+
+/** ¿Puede este navegador grabar dentro de la app? */
+function hayCamaraEnApp() {
+  return typeof navigator !== 'undefined'
+    && !!navigator.mediaDevices?.getUserMedia
+    && typeof window !== 'undefined'
+    && typeof window.MediaRecorder !== 'undefined';
+}
+
+/** Primer formato de video que el navegador acepte de verdad. */
+function formatoSoportado(candidatos = FORMATOS, soporta = null) {
+  const test = soporta || ((t) => window.MediaRecorder?.isTypeSupported?.(t));
+  for (const t of candidatos) { try { if (test(t)) return t; } catch { /* siguiente */ } }
+  return '';
+}
+
+/**
+ * Pide permiso para leer el acelerometro.
+ *
+ * iOS 13 lo exige desde un gesto de la persona y devuelve una promesa; el resto
+ * de navegadores no piden nada. Si se deniega, no pasa nada: la prueba sigue
+ * valiendo, simplemente no habra contraste de movimiento.
+ */
+async function permisoMovimiento() {
+  const DME = typeof window !== 'undefined' ? window.DeviceMotionEvent : null;
+  if (!DME) return false;
+  if (typeof DME.requestPermission !== 'function') return true;
+  try { return (await DME.requestPermission()) === 'granted'; } catch { return false; }
+}
+
+/**
+ * Muestrea el acelerometro hasta que se le dice basta.
+ * @returns {{parar:() => Array<{x,y,z,t}>}}
+ */
+function muestreadorMovimiento(ventana = window) {
+  const muestras = [];
+  const inicio = Date.now();
+  const alMover = (ev) => {
+    // `accelerationIncludingGravity` esta disponible en practicamente todo;
+    // `acceleration` (sin gravedad) falta en varios navegadores. Se usa la
+    // primera y la gravedad se quita despues restando la media, que en una
+    // ventana corta es justamente eso.
+    const a = ev.accelerationIncludingGravity || ev.acceleration;
+    if (!a || a.x === null) return;
+    muestras.push({ x: a.x || 0, y: a.y || 0, z: a.z || 0, t: Date.now() - inicio });
+  };
+  ventana.addEventListener('devicemotion', alMover);
+  return {
+    parar() {
+      ventana.removeEventListener('devicemotion', alMover);
+      return muestras;
+    },
+  };
+}
+
+/**
+ * Abre la camara y devuelve la prueba grabada.
+ *
+ * @param {{segundos?:number, modo?:'video'|'foto'}} opciones
+ * @returns {Promise<{blob:Blob, tipo:string, enVivo:true, analisis:object}|null>}
+ *          null si la persona cancela.
+ */
+function abrirCamara({ segundos = SEGUNDOS_CLIP, modo = 'video' } = {}) {
+  return new Promise((resolver, rechazar) => {
+    let flujo = null;
+    let grabador = null;
+    let sensor = null;
+    let temporizador = null;
+    let resuelto = false;
+
+    const video = el('video', { autoplay: '', muted: '', playsinline: '', clase: 'camara-previa' });
+    video.muted = true;
+
+    const estado = el('p', { clase: 'pista', texto: 'Pidiendo permiso a la cámara…' });
+    const contador = el('div', { clase: 'camara-contador', texto: '' });
+    const boton = el('button', { clase: 'btn primario grande bloque', texto: 'Grabando…', disabled: '' });
+
+    const cerrar = modal(el('div', { clase: 'camara' }, [
+      el('div', { clase: 'camara-marco' }, [video, contador]),
+      estado,
+      boton,
+    ]), { titulo: modo === 'foto' ? 'Hacer una foto' : 'Grabar la prueba', ancho: 460 });
+
+    const limpiar = () => {
+      clearInterval(temporizador);
+      try { grabador?.state === 'recording' && grabador.stop(); } catch { /* ya parado */ }
+      flujo?.getTracks().forEach((t) => t.stop());
+      sensor?.parar();
+    };
+    const terminar = (valor) => {
+      if (resuelto) return;
+      resuelto = true;
+      limpiar();
+      cerrar();
+      resolver(valor);
+    };
+
+    // Cerrar el modal por fuera equivale a cancelar: sin esto, la camara del
+    // telefono se quedaria encendida y el punto rojo del sistema tambien.
+    const observador = new MutationObserver(() => {
+      if (!document.body.contains(video)) { observador.disconnect(); terminar(null); }
+    });
+    observador.observe(document.body, { childList: true, subtree: true });
+
+    (async () => {
+      try {
+        flujo = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } },
+          audio: modo === 'video',
+        });
+      } catch (e) {
+        terminar(null);
+        rechazar(new Error(
+          e?.name === 'NotAllowedError'
+            ? 'No diste permiso a la cámara. Puedes adjuntar un archivo en su lugar.'
+            : 'No se pudo abrir la cámara en este dispositivo.'));
+        return;
+      }
+      video.srcObject = flujo;
+
+      const permiso = await permisoMovimiento();
+      if (permiso) sensor = muestreadorMovimiento();
+
+      if (modo === 'foto') {
+        estado.textContent = permiso
+          ? 'Encuadra y pulsa. Se mide también el movimiento.'
+          : 'Encuadra y pulsa.';
+        boton.textContent = '📸 Hacer la foto';
+        boton.disabled = false;
+        boton.onclick = async () => {
+          boton.disabled = true;
+          const lienzo = el('canvas');
+          lienzo.width = video.videoWidth || 1280;
+          lienzo.height = video.videoHeight || 720;
+          lienzo.getContext('2d').drawImage(video, 0, 0, lienzo.width, lienzo.height);
+          const blob = await new Promise((ok) => lienzo.toBlob(ok, 'image/jpeg', 0.85));
+          const muestras = sensor?.parar() || [];
+          sensor = null;
+          terminar({ blob, tipo: 'image/jpeg', enVivo: true, analisis: analizarMovimiento(muestras) });
+        };
+        return;
+      }
+
+      const formato = formatoSoportado();
+      try {
+        grabador = new MediaRecorder(flujo, formato ? { mimeType: formato } : undefined);
+      } catch {
+        terminar(null);
+        rechazar(new Error('Este navegador no puede grabar vídeo. Adjunta un archivo en su lugar.'));
+        return;
+      }
+
+      const trozos = [];
+      grabador.ondataavailable = (ev) => { if (ev.data?.size) trozos.push(ev.data); };
+      grabador.onstop = () => {
+        const muestras = sensor?.parar() || [];
+        sensor = null;
+        const tipo = grabador.mimeType || formato || 'video/webm';
+        terminar({
+          blob: new Blob(trozos, { type: tipo }),
+          tipo, enVivo: true, analisis: analizarMovimiento(muestras),
+        });
+      };
+
+      grabador.start();
+      estado.textContent = permiso
+        ? 'Grabando. Muévete como en la acción que declaraste.'
+        : 'Grabando.';
+      let quedan = segundos;
+      contador.textContent = `${quedan}`;
+      boton.textContent = '⏹ Terminar ya';
+      boton.disabled = false;
+      boton.onclick = () => { try { grabador.stop(); } catch { terminar(null); } };
+      temporizador = setInterval(() => {
+        quedan -= 1;
+        contador.textContent = `${Math.max(0, quedan)}`;
+        if (quedan <= 0) {
+          clearInterval(temporizador);
+          try { grabador.stop(); } catch { terminar(null); }
+        }
+      }, 1000);
+    })().catch(() => { terminar(null); });
+  });
+}
+
+/** Envoltorio con aviso: devuelve null y avisa si la camara no esta disponible. */
+async function capturar(opciones) {
+  if (!hayCamaraEnApp()) {
+    toast({ titulo: 'Sin cámara en la app', tipo: 'alerta', icono: '📷',
+      texto: 'Este navegador no permite grabar aquí. Adjunta un archivo con el otro botón.' });
+    return null;
+  }
+  try {
+    return await abrirCamara(opciones);
+  } catch (e) {
+    toast({ titulo: 'No se pudo grabar', texto: e.message, tipo: 'alerta', icono: '📷' });
+    return null;
+  }
+}
+
+  __exp.SEGUNDOS_CLIP = SEGUNDOS_CLIP;
+  __exp.hayCamaraEnApp = hayCamaraEnApp;
+  __exp.formatoSoportado = formatoSoportado;
+  __exp.permisoMovimiento = permisoMovimiento;
+  __exp.muestreadorMovimiento = muestreadorMovimiento;
+  __exp.abrirCamara = abrirCamara;
+  __exp.capturar = capturar;
+});
+
 __def("src/ui/vistas/registrar.js", function (__exp, __req) {
 /** registrar.js — Catalogo de acciones y formulario de registro. */
 const { el, num, co2, toast, modal, esc, vacio } = __req("src/ui/componentes.js");
@@ -5305,6 +5848,7 @@ const { claveDia } = __req("src/core/rachas.js");
 const { iniciarSeguimiento, analizarTraza, verificarContra } = __req("src/core/gps.js");
 const { parsearTraza, metadatosTraza } = __req("src/core/gpx.js");
 const { procesarMedio, selectorMedio, guardarMedio, LIMITE_ARCHIVO_MB } = __req("src/ui/medios.js");
+const { capturar, hayCamaraEnApp, SEGUNDOS_CLIP } = __req("src/ui/camara.js");
 const { evaluarEvidencia, NIVELES_EVIDENCIA } = __req("src/core/evidencia.js");
 
 let filtroCat = 'todas';
@@ -5713,6 +6257,7 @@ function construirMedios(a, estado, alAdjuntar) {
         tipo: actual.tipo, exif: actual.exif, fechaArchivo: actual.fechaArchivo,
         hash: actual.hash, hashesPrevios: estado.medios || [],
         ancho: actual.ancho, alto: actual.alto, bytes: actual.bytes,
+        enVivo: actual.enVivo, movimiento: actual.movimiento,
       });
       const meta = NIVELES_EVIDENCIA[ev.nivel];
 
@@ -5750,17 +6295,50 @@ function construirMedios(a, estado, alAdjuntar) {
       }
     });
 
+    // Grabar dentro de la app abre la camara en cualquier dispositivo y, sobre
+    // todo, hace imposible elegir un archivo de la galeria. Por eso va primero
+    // y adjuntar queda como alternativa, no al reves.
+    const grabar = async (modo) => {
+      const r = await capturar({ modo, segundos: SEGUNDOS_CLIP });
+      if (!r) return;
+      pintar(null, true);
+      try {
+        const archivo = new File([r.blob], `prueba.${modo === 'foto' ? 'jpg' : 'webm'}`, { type: r.tipo });
+        const m = await procesarMedio(archivo);
+        m.id = `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+        m.enVivo = true;
+        m.movimiento = r.analisis;
+        if (actual?.url) URL.revokeObjectURL(actual.url);
+        actual = m;
+        alAdjuntar(m);
+        pintar();
+      } catch (e) {
+        pintar(e.message || 'No se pudo procesar lo grabado.');
+      }
+    };
+
+    const enApp = hayCamaraEnApp();
     caja.appendChild(el('div', { clase: 'fila envuelve', estilo: 'gap:7px' }, [
-      el('button', {
+      enApp ? el('button', {
         clase: `btn s${actual ? '' : ' primario'}`,
-        texto: actual ? '🔄 Cambiar prueba' : '📷 Hacer foto o video',
+        texto: `🎥 Grabar ${SEGUNDOS_CLIP} s ahora`,
+        onclick: () => grabar('video'),
+      }) : null,
+      enApp ? el('button', { clase: 'btn s', texto: '📸 Foto ahora', onclick: () => grabar('foto') }) : null,
+      el('button', {
+        clase: `btn s${!enApp && !actual ? ' primario' : ''}`,
+        texto: '📎 Adjuntar archivo',
         onclick: () => input.click(),
       }),
       input,
     ]));
 
-    caja.appendChild(el('div', { clase: 'mini', estilo: 'margin-top:9px' },
-      [`En el movil se abre la camara directamente. Se guarda una miniatura, no el original, para no llenar el almacenamiento (limite ${LIMITE_ARCHIVO_MB} MB por archivo). Nada se envia a ningun servidor.`]));
+    caja.appendChild(el('div', { clase: 'mini', estilo: 'margin-top:9px' }, [
+      enApp
+        ? `Grabar aqui abre la camara directamente y vale mas (×${NIVELES_EVIDENCIA.envivo.factor}): lo que graba la app no puede venir de la galeria. Mientras grabas se mide el movimiento, asi que caminar o correr quedan confirmados por el sensor. Adjuntar un archivo sigue valiendo, con su nivel segun los metadatos.`
+        : `Este navegador no permite grabar aqui; en el movil el boton de adjuntar abre la camara. Limite ${LIMITE_ARCHIVO_MB} MB por archivo.`,
+      ' Se guarda una miniatura, no el original, y nada sale de tu dispositivo salvo que publiques la accion.',
+    ]));
   };
 
   pintar();
@@ -8485,20 +9063,60 @@ async function publicacionesDe(perfilId) {
 }
 
 /** Identificadores de las publicaciones a las que YA di me gusta. */
-async function misMeGusta() {
-  const s = sesion();
-  if (!s?.perfilId) return new Set();
-  const filas = await llamarAPI(`/rest/v1/megusta?perfil_id=eq.${s.perfilId}&select=publicacion_id`);
-  return new Set((filas || []).map((f) => f.publicacion_id));
+/**
+ * Reacciones posibles.
+ *
+ * TODAS VALEN LO MISMO EN AURA, y no es un descuido. Si el corazon puntuara mas
+ * que el me gusta, la gente elegiria por lo que suma y no por lo que siente, y
+ * el dato dejaria de decir nada sobre la publicacion. Lo que cambia es el
+ * matiz que se expresa, no el precio.
+ */
+const REACCIONES = Object.freeze([
+  { tipo: 'me_gusta',   icono: '👍', etiqueta: 'Me gusta' },
+  { tipo: 'me_encanta', icono: '😍', etiqueta: 'Me encanta' },
+  { tipo: 'corazon',    icono: '❤️', etiqueta: 'Corazón' },
+  { tipo: 'aplauso',    icono: '👏', etiqueta: 'Bien hecho' },
+  { tipo: 'inspira',    icono: '🌱', etiqueta: 'Me inspira' },
+]);
+
+const TIPOS_REACCION = Object.freeze(REACCIONES.map((r) => r.tipo));
+
+/** Datos de una reaccion por su tipo, con respaldo si llega uno desconocido. */
+function reaccion(tipo) {
+  return REACCIONES.find((r) => r.tipo === tipo) || REACCIONES[0];
 }
 
-async function darMeGusta(publicacionId) {
+/** Mis reacciones, como mapa publicacion -> tipo. */
+async function misReacciones() {
+  const s = sesion();
+  if (!s?.perfilId) return new Map();
+  const filas = await llamarAPI(
+    `/rest/v1/megusta?perfil_id=eq.${s.perfilId}&select=publicacion_id,tipo`);
+  return new Map((filas || []).map((f) => [f.publicacion_id, f.tipo || 'me_gusta']));
+}
+
+/** Compatibilidad: solo el conjunto de publicaciones a las que reaccione. */
+async function misMeGusta() {
+  return new Set((await misReacciones()).keys());
+}
+
+async function darMeGusta(publicacionId, tipo = 'me_gusta') {
   const s = sesion();
   return llamarAPI('/rest/v1/megusta', {
     metodo: 'POST',
-    cuerpo: { publicacion_id: publicacionId, perfil_id: s.perfilId },
+    cuerpo: { publicacion_id: publicacionId, perfil_id: s.perfilId, tipo: normalizar(tipo) },
     cabeceras: { Prefer: 'return=minimal' },
   });
+}
+
+/** Cambia el matiz sin quitar y volver a poner: el aura no parpadea. */
+async function cambiarReaccion(publicacionId, tipo) {
+  const s = sesion();
+  return llamarAPI(
+    `/rest/v1/megusta?publicacion_id=eq.${publicacionId}&perfil_id=eq.${s.perfilId}`, {
+      metodo: 'PATCH', cuerpo: { tipo: normalizar(tipo) },
+      cabeceras: { Prefer: 'return=minimal' },
+    });
 }
 
 async function quitarMeGusta(publicacionId) {
@@ -8507,11 +9125,32 @@ async function quitarMeGusta(publicacionId) {
     { metodo: 'DELETE' });
 }
 
-/** Alterna el me gusta y devuelve el estado resultante. */
+function normalizar(tipo) {
+  return TIPOS_REACCION.includes(tipo) ? tipo : 'me_gusta';
+}
+
+/**
+ * Aplica una reaccion y devuelve el tipo resultante, o null si se retiro.
+ *
+ * Pulsar la misma que ya tenias la quita; pulsar otra la cambia. Es el gesto
+ * que la gente ya conoce, y evita el estado raro de "reaccione dos veces".
+ *
+ * @param {string} publicacionId
+ * @param {string|null} actual la reaccion que ya tenias, o null
+ * @param {string} elegida
+ * @returns {Promise<string|null>}
+ */
+async function aplicarReaccion(publicacionId, actual, elegida) {
+  const nueva = normalizar(elegida);
+  if (actual === nueva) { await quitarMeGusta(publicacionId); return null; }
+  if (actual) { await cambiarReaccion(publicacionId, nueva); return nueva; }
+  await darMeGusta(publicacionId, nueva);
+  return nueva;
+}
+
+/** Compatibilidad con el alternar simple de antes. */
 async function alternarMeGusta(publicacionId, teGusta) {
-  if (teGusta) { await quitarMeGusta(publicacionId); return false; }
-  await darMeGusta(publicacionId);
-  return true;
+  return (await aplicarReaccion(publicacionId, teGusta ? 'me_gusta' : null, 'me_gusta')) !== null;
 }
 
 async function reportar(publicacionId, motivo = 'inapropiado') {
@@ -8632,9 +9271,15 @@ function haceRato(iso) {
   __exp.muro = muro;
   __exp.virales = virales;
   __exp.publicacionesDe = publicacionesDe;
+  __exp.REACCIONES = REACCIONES;
+  __exp.TIPOS_REACCION = TIPOS_REACCION;
+  __exp.reaccion = reaccion;
+  __exp.misReacciones = misReacciones;
   __exp.misMeGusta = misMeGusta;
   __exp.darMeGusta = darMeGusta;
+  __exp.cambiarReaccion = cambiarReaccion;
   __exp.quitarMeGusta = quitarMeGusta;
+  __exp.aplicarReaccion = aplicarReaccion;
   __exp.alternarMeGusta = alternarMeGusta;
   __exp.reportar = reportar;
   __exp.fijarMote = fijarMote;
@@ -8695,7 +9340,7 @@ async function pintarMuro(cuerpo, ctx, repintar) {
   const intentar = async (fn, q) => { try { return await fn(); } catch (e) { errores.push(`${q}: ${e.message}`); return null; } };
 
   const perfil = await intentar(api.miPerfil, 'perfil');
-  const gustadas = (await intentar(social.misMeGusta, 'me gusta')) || new Set();
+  const gustadas = (await intentar(social.misReacciones, 'reacciones')) || new Map();
   const publicaciones = (await intentar(
     () => (pestana === 'virales' ? social.virales() : social.muro(30)), 'muro')) || [];
   cargando.remove();
@@ -8744,7 +9389,7 @@ async function pintarMuro(cuerpo, ctx, repintar) {
       'Publica tu primera accion y se la primera persona del muro'));
   } else {
     cuerpo.appendChild(el('div', { clase: 'rejilla ancha' },
-      publicaciones.map((p) => tarjetaPublicacion(p, gustadas.has(p.id), ctx, repintar))));
+      publicaciones.map((p) => tarjetaPublicacion(p, gustadas.get(p.id) || null, ctx, repintar))));
   }
 
   cuerpo.appendChild(el('div', { clase: 'aviso info', estilo: 'margin-top:20px' }, [
@@ -8753,35 +9398,77 @@ async function pintarMuro(cuerpo, ctx, repintar) {
   ]));
 }
 
-function tarjetaPublicacion(p, meGusta, ctx, repintar) {
+function tarjetaPublicacion(p, reaccionMia, ctx, repintar) {
+  let meGusta = reaccionMia;
   const a = accion(p.accion_id);
   const cat = CATEGORIAS[p.categoria];
   const url = social.urlMedio(p.ruta_medio);
   const nivel = NIVELES_EVIDENCIA[p.nivel_evidencia];
   const mio = p.perfil_id === api.sesion()?.perfilId;
 
+  // `meGusta` llega como el TIPO de reaccion o null: una persona reacciona una
+  // sola vez a cada publicacion y elige el matiz.
   const contador = el('span', { clase: 'mono', texto: String(p.likes_n ?? 0) });
+  const cara = el('span', { texto: meGusta ? social.reaccion(meGusta).icono : '🤍' });
   const boton = el('button', {
     clase: `chip${meGusta ? ' activo' : ''}`,
     estilo: mio ? 'opacity:.45;cursor:not-allowed' : '',
-    title: mio ? 'No puedes darte me gusta a ti' : 'Me gusta',
-  }, [el('span', { texto: meGusta ? '💚' : '🤍' }), contador]);
+    title: mio ? 'No puedes reaccionar a lo tuyo' : 'Reacciona (manten pulsado para elegir)',
+  }, [cara, contador]);
 
   if (!mio) {
     let ocupado = false;
-    boton.addEventListener('click', async () => {
+    const aplicar = async (tipo) => {
       if (ocupado) return;
       ocupado = true;
       const antes = meGusta;
       try {
-        meGusta = await social.alternarMeGusta(p.id, antes);
-        p.likes_n = Math.max(0, (p.likes_n ?? 0) + (meGusta ? 1 : -1));
-        contador.textContent = String(p.likes_n);
+        meGusta = await social.aplicarReaccion(p.id, antes, tipo);
+        // El contador solo cambia al entrar o salir; cambiar de matiz no suma.
+        if (!antes && meGusta) p.likes_n = (p.likes_n ?? 0) + 1;
+        if (antes && !meGusta) p.likes_n = Math.max(0, (p.likes_n ?? 0) - 1);
+        contador.textContent = String(p.likes_n ?? 0);
         boton.className = `chip${meGusta ? ' activo' : ''}`;
-        boton.firstChild.textContent = meGusta ? '💚' : '🤍';
+        cara.textContent = meGusta ? social.reaccion(meGusta).icono : '🤍';
       } catch (e) {
-        toast({ titulo: 'No se pudo registrar el me gusta', texto: e.message, tipo: 'error', icono: '⛔' });
+        toast({ titulo: 'No se pudo registrar la reaccion', texto: e.message, tipo: 'error', icono: '⛔' });
       } finally { ocupado = false; }
+    };
+
+    // Pulsar da la reaccion por defecto; mantener pulsado abre el abanico. Es
+    // el gesto que la gente ya conoce de otras aplicaciones, y deja el caso
+    // frecuente en un solo toque.
+    let abanico = null;
+    // Soltar tras una pulsacion larga dispara un `click`. Sin tragarselo, ese
+    // click cerraba el abanico en el mismo instante en que se abria y nadie
+    // llegaba a verlo.
+    let tragarClic = false;
+    const cerrarAbanico = () => { abanico?.remove(); abanico = null; };
+    const abrirAbanico = () => {
+      if (abanico) return;
+      tragarClic = true;
+      abanico = el('div', { clase: 'abanico' }, social.REACCIONES.map((r) => el('button', {
+        clase: `abanico-op${meGusta === r.tipo ? ' activo' : ''}`,
+        title: r.etiqueta, texto: r.icono,
+        onclick: (ev) => { ev.stopPropagation(); cerrarAbanico(); aplicar(r.tipo); },
+      })));
+      (boton.closest('.ancla-reaccion') || boton.parentElement).appendChild(abanico);
+      // Se espera a que pase el click de soltar antes de escuchar el de fuera.
+      setTimeout(() => document.addEventListener('click', cerrarAbanico, { once: true }), 350);
+    };
+
+    let temporizador = null;
+    const empezar = () => { temporizador = setTimeout(abrirAbanico, 420); };
+    const soltar = () => { clearTimeout(temporizador); };
+    boton.addEventListener('pointerdown', empezar);
+    boton.addEventListener('pointerup', soltar);
+    boton.addEventListener('pointerleave', soltar);
+    boton.addEventListener('contextmenu', (ev) => { ev.preventDefault(); abrirAbanico(); });
+    boton.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (tragarClic) { tragarClic = false; return; }
+      if (abanico) { cerrarAbanico(); return; }
+      aplicar(meGusta || 'me_gusta');
     });
   }
 
@@ -8838,7 +9525,7 @@ function tarjetaPublicacion(p, meGusta, ctx, repintar) {
       el('div', { clase: 'fila entre', estilo: 'padding-top:9px;border-top:1px solid var(--borde)' }, [
         el('span', { clase: 'mono mini', estilo: 'color:var(--verde)', texto: `${co2(p.co2e || 0)} evitados` }),
         el('div', { clase: 'fila', estilo: 'gap:5px' }, [
-          boton,
+          el('span', { clase: 'ancla-reaccion' }, [boton]),
           mio
             ? el('button', { clase: 'chip', texto: '🗑️', title: 'Borrar mi publicacion',
               onclick: async () => {
@@ -9912,7 +10599,7 @@ const { vistaComunidad } = __req("src/ui/vistas/comunidad.js");
 const { vistaCiencia } = __req("src/ui/vistas/ciencia.js");
 const { vistaPerfil } = __req("src/ui/vistas/perfil.js");
 const { vistaBienvenida, tocaBienvenida, marcarVisto } = __req("src/ui/vistas/bienvenida.js");
-const { recogerSesionDeURL } = __req("src/core/nube.js");
+const { recogerSesionDeURL, haySesion, miPerfil } = __req("src/core/nube.js");
 const { motePendiente, guardarMotePendiente, fijarMote } = __req("src/core/social.js");
 
 const RUTAS = [
@@ -10047,11 +10734,34 @@ function iniciar(raiz) {
   // El ajuste local (nombre y pais) solo se pregunta a quien decide explorar
   // sin cuenta. Quien crea cuenta ya lo dice en el alta, y sacarle un modal
   // encima de la portada dejaba sus botones sin poder pulsarse.
-  if (!guardado && rutaActual !== 'bienvenida') setTimeout(() => ajusteLocal(ctx), 350);
+  //
+  // Y a quien entra en un movil nuevo tampoco: su nombre y su pais ya estan en
+  // el servidor. Preguntarselos otra vez seria pedirle que repita lo que la
+  // app ya sabe, asi que se traen de su perfil.
+  if (!guardado && rutaActual !== 'bienvenida') {
+    if (haySesion()) traerPerfilDeLaNube(ctx);
+    else setTimeout(() => ajusteLocal(ctx), 350);
+  }
 
   anunciarVuelta(vueltaDelCorreo, ctx);
 
   return ctx;
+}
+
+/**
+ * Rellena el perfil local con el que ya existe en el servidor.
+ *
+ * El pais no es un adorno: de el sale la intensidad de carbono de la red
+ * electrica, y sin el los calculos usarian el promedio mundial. Si la nube no
+ * responde no pasa nada — se queda el valor por defecto y se puede cambiar en
+ * Perfil— asi que el fallo es silencioso a proposito.
+ */
+function traerPerfilDeLaNube(ctx) {
+  miPerfil().then((p) => {
+    if (!p?.nombre) return;
+    ctx.almacen.actualizarPerfil({ nombre: p.nombre, pais: p.pais || 'WW' });
+    ctx.refrescar();
+  }).catch(() => { /* se queda el perfil por defecto */ });
 }
 
 /**

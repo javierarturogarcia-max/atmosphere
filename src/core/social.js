@@ -192,20 +192,60 @@ export async function publicacionesDe(perfilId) {
 }
 
 /** Identificadores de las publicaciones a las que YA di me gusta. */
-export async function misMeGusta() {
-  const s = sesion();
-  if (!s?.perfilId) return new Set();
-  const filas = await llamarAPI(`/rest/v1/megusta?perfil_id=eq.${s.perfilId}&select=publicacion_id`);
-  return new Set((filas || []).map((f) => f.publicacion_id));
+/**
+ * Reacciones posibles.
+ *
+ * TODAS VALEN LO MISMO EN AURA, y no es un descuido. Si el corazon puntuara mas
+ * que el me gusta, la gente elegiria por lo que suma y no por lo que siente, y
+ * el dato dejaria de decir nada sobre la publicacion. Lo que cambia es el
+ * matiz que se expresa, no el precio.
+ */
+export const REACCIONES = Object.freeze([
+  { tipo: 'me_gusta',   icono: '👍', etiqueta: 'Me gusta' },
+  { tipo: 'me_encanta', icono: '😍', etiqueta: 'Me encanta' },
+  { tipo: 'corazon',    icono: '❤️', etiqueta: 'Corazón' },
+  { tipo: 'aplauso',    icono: '👏', etiqueta: 'Bien hecho' },
+  { tipo: 'inspira',    icono: '🌱', etiqueta: 'Me inspira' },
+]);
+
+export const TIPOS_REACCION = Object.freeze(REACCIONES.map((r) => r.tipo));
+
+/** Datos de una reaccion por su tipo, con respaldo si llega uno desconocido. */
+export function reaccion(tipo) {
+  return REACCIONES.find((r) => r.tipo === tipo) || REACCIONES[0];
 }
 
-export async function darMeGusta(publicacionId) {
+/** Mis reacciones, como mapa publicacion -> tipo. */
+export async function misReacciones() {
+  const s = sesion();
+  if (!s?.perfilId) return new Map();
+  const filas = await llamarAPI(
+    `/rest/v1/megusta?perfil_id=eq.${s.perfilId}&select=publicacion_id,tipo`);
+  return new Map((filas || []).map((f) => [f.publicacion_id, f.tipo || 'me_gusta']));
+}
+
+/** Compatibilidad: solo el conjunto de publicaciones a las que reaccione. */
+export async function misMeGusta() {
+  return new Set((await misReacciones()).keys());
+}
+
+export async function darMeGusta(publicacionId, tipo = 'me_gusta') {
   const s = sesion();
   return llamarAPI('/rest/v1/megusta', {
     metodo: 'POST',
-    cuerpo: { publicacion_id: publicacionId, perfil_id: s.perfilId },
+    cuerpo: { publicacion_id: publicacionId, perfil_id: s.perfilId, tipo: normalizar(tipo) },
     cabeceras: { Prefer: 'return=minimal' },
   });
+}
+
+/** Cambia el matiz sin quitar y volver a poner: el aura no parpadea. */
+export async function cambiarReaccion(publicacionId, tipo) {
+  const s = sesion();
+  return llamarAPI(
+    `/rest/v1/megusta?publicacion_id=eq.${publicacionId}&perfil_id=eq.${s.perfilId}`, {
+      metodo: 'PATCH', cuerpo: { tipo: normalizar(tipo) },
+      cabeceras: { Prefer: 'return=minimal' },
+    });
 }
 
 export async function quitarMeGusta(publicacionId) {
@@ -214,11 +254,32 @@ export async function quitarMeGusta(publicacionId) {
     { metodo: 'DELETE' });
 }
 
-/** Alterna el me gusta y devuelve el estado resultante. */
+function normalizar(tipo) {
+  return TIPOS_REACCION.includes(tipo) ? tipo : 'me_gusta';
+}
+
+/**
+ * Aplica una reaccion y devuelve el tipo resultante, o null si se retiro.
+ *
+ * Pulsar la misma que ya tenias la quita; pulsar otra la cambia. Es el gesto
+ * que la gente ya conoce, y evita el estado raro de "reaccione dos veces".
+ *
+ * @param {string} publicacionId
+ * @param {string|null} actual la reaccion que ya tenias, o null
+ * @param {string} elegida
+ * @returns {Promise<string|null>}
+ */
+export async function aplicarReaccion(publicacionId, actual, elegida) {
+  const nueva = normalizar(elegida);
+  if (actual === nueva) { await quitarMeGusta(publicacionId); return null; }
+  if (actual) { await cambiarReaccion(publicacionId, nueva); return nueva; }
+  await darMeGusta(publicacionId, nueva);
+  return nueva;
+}
+
+/** Compatibilidad con el alternar simple de antes. */
 export async function alternarMeGusta(publicacionId, teGusta) {
-  if (teGusta) { await quitarMeGusta(publicacionId); return false; }
-  await darMeGusta(publicacionId);
-  return true;
+  return (await aplicarReaccion(publicacionId, teGusta ? 'me_gusta' : null, 'me_gusta')) !== null;
 }
 
 export async function reportar(publicacionId, motivo = 'inapropiado') {

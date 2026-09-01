@@ -73,6 +73,28 @@ create table if not exists public.megusta (
   primary key (publicacion_id, perfil_id)
 );
 
+-- REACCIONES. Una persona reacciona UNA vez a cada publicacion, pero puede
+-- elegir como: la clave primaria de arriba lo garantiza y esta columna dice
+-- cual. Contar cada tipo por separado permitiria a una sola persona sumar cinco
+-- veces, que es exactamente el agujero que la clave primaria vino a cerrar.
+--
+-- Todas valen lo mismo en aura, a proposito: si el corazon valiera mas que el
+-- me gusta, la gente elegiria por lo que puntua y no por lo que siente, y el
+-- dato dejaria de significar nada.
+alter table public.megusta
+  add column if not exists tipo text not null default 'me_gusta';
+
+alter table public.megusta drop constraint if exists megusta_tipo_valido;
+alter table public.megusta
+  add constraint megusta_tipo_valido
+  check (tipo in ('me_gusta','me_encanta','corazon','aplauso','inspira'));
+
+-- Cambiar de reaccion es un update sobre la fila propia, no un borrado y otro
+-- insert: asi el aura no parpadea y no se pierde la fecha original.
+drop policy if exists "cambiar mi reaccion" on public.megusta;
+create policy "cambiar mi reaccion" on public.megusta
+  for update using (perfil_id = auth.uid()) with check (perfil_id = auth.uid());
+
 create table if not exists public.reportes (
   publicacion_id uuid not null references public.publicaciones on delete cascade,
   perfil_id      uuid not null references public.perfiles on delete cascade,
@@ -150,6 +172,9 @@ revoke all on public.publicaciones, public.megusta, public.reportes from anon, a
 
 grant select, insert, delete on public.publicaciones to authenticated;
 grant select, insert, delete on public.megusta to authenticated;
+-- Solo la columna del tipo: el resto de la fila sigue siendo inmutable, para
+-- que nadie mueva su reaccion a la publicacion de otro.
+grant update (tipo) on public.megusta to authenticated;
 grant select, insert on public.reportes to authenticated;
 
 -- -----------------------------------------------------------------------------

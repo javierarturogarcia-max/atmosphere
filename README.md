@@ -28,7 +28,7 @@ La mayoría de las apps de sostenibilidad fallan por una de estas tres razones:
 
 **Sistema de juego** — XP con curva superlineal, 10 rangos, 47 insignias evaluadas por predicados puros, misiones diarias/semanales/mensuales generadas de forma determinista, rachas con congelaciones, 6 ligas, 16 recompensas canjeables.
 
-**Sincronización opcional en la nube** — Postgres (Supabase) con seguridad por fila, grupos por clase o centro, y ranking con personas reales. Desactivada por defecto: la app funciona entera sin cuenta. **El cliente nunca escribe su propia puntuación** — solo inserta registros inmutables, y el servidor deriva los totales con un disparador. El esquema se verifica contra un PostgreSQL real con `npm run test:db` (30 comprobaciones del núcleo + 23 de la capa social). Puesta en marcha en [`db/INSTALACION.md`](db/INSTALACION.md).
+**Sincronización opcional en la nube** — Postgres (Supabase) con seguridad por fila, grupos por clase o centro, y ranking con personas reales. Desactivada por defecto: la app funciona entera sin cuenta. **El cliente nunca escribe su propia puntuación** — solo inserta registros inmutables, y el servidor deriva los totales con un disparador. El esquema se verifica contra un PostgreSQL real con `npm run test:db` (30 comprobaciones del núcleo + 26 de la capa social). Puesta en marcha en [`db/INSTALACION.md`](db/INSTALACION.md).
 
 **Analítica** — regresión OLS y Theil-Sen, test de tendencia de Mann-Kendall con corrección por empates, media móvil, EWMA, bootstrap, índices de Shannon/Pielou/Gini, perfiles circadiano y semanal, mapa de calor de constancia.
 
@@ -47,7 +47,12 @@ La mayoría de las apps de sostenibilidad fallan por una de estas tres razones:
 | Foto tomada hoy | ×1,25 |
 | Foto de hoy con GPS coherente | ×1,40 |
 | Vídeo del momento | ×1,45 |
+| **Grabado dentro de la app** | **×1,60** |
 | Imagen ya usada antes | ×1 y marcada |
+
+**La cámara se abre dentro de la app** — un botón, la cámara se abre en cualquier dispositivo y graba un clip de 8 segundos. Eso no es solo comodidad: lo que graba la app **no puede venir de la galería**, así que no hay que deducir el origen del archivo a partir de sus metadatos. Es el nivel de prueba más alto (×1,60).
+
+**El sensor confirma lo que puede confirmar** — mientras grabas se muestrea el acelerómetro. La cadencia de pasos distingue quieto de caminar (80-135 ppm) y caminar de correr (145-220 ppm), y declara la franja ambigua de 135 a 145 en lugar de escoger. Confirma, nunca descalifica: reciclar de pie y quieto no es sospechoso. Lo que ningún sensor ve —si es plástico o vidrio, si bebiste agua— lo valida la comunidad viendo el vídeo, y eso es a lo que sirve el muro.
 
 **Verificación con el dispositivo** — GPS en vivo o importación de trazas GPX/TCX desde Strava, Garmin, Komoot o Apple Salud. La distancia la mide el aparato, no la teclea la persona: se infiere el modo de transporte del perfil de velocidad, se descartan los saltos de GPS y se comprueba que la traza respalde la acción declarada.
 
@@ -65,8 +70,8 @@ El aura **no se mezcla con los puntos**: los puntos son impacto físico, el aura
 
 ```bash
 npm run dev      # servidor local en http://localhost:4173
-npm test         # 173 pruebas del motor
-npm run test:db  # ejecuta el SQL contra un PostgreSQL real (PGlite): 30 + 23 comprobaciones
+npm test         # 190 pruebas del motor
+npm run test:db  # ejecuta el SQL contra un PostgreSQL real (PGlite): 30 + 26 comprobaciones
 npm run build    # genera dist/atmosphere.html (un solo archivo, sin dependencias)
 npm run verify   # pruebas + esquema + build
 ```
@@ -105,7 +110,8 @@ src/
 │   ├── gpx.js            Lectura de archivos GPX y TCX
 │   ├── evidencia.js      EXIF, hash perceptual y credibilidad de pruebas
 │   ├── nube.js           Cliente REST de Supabase, sin dependencias
-│   ├── social.js         Muro, motes, aura, me gusta y subida de medios
+│   ├── social.js         Muro, motes, aura, reacciones y subida de medios
+│   ├── cadencia.js       Cadencia de pasos del acelerometro
 │   ├── ranking.js        Ligas y cohorte log-normal
 │   ├── rng.js            Aleatoriedad determinista (mulberry32)
 │   └── estado.js         Almacén, persistencia y transacciones
@@ -116,6 +122,7 @@ src/
     ├── app.js            Navegación y enrutado
     ├── componentes.js    Primitivas y gráficos
     ├── medios.js         Cámara, miniaturas e IndexedDB
+    ├── camara.js         Grabacion en vivo con getUserMedia + sensores
     └── vistas/           14 vistas
 ```
 
@@ -146,7 +153,7 @@ subcarpeta de proyecto.
 
 ### GitHub Pages (configurado en este repositorio)
 
-El flujo de trabajo `.github/workflows/pages.yml` ejecuta las 173 pruebas,
+El flujo de trabajo `.github/workflows/pages.yml` ejecuta las 190 pruebas,
 comprueba que `dist/` no esté desfasado respecto a `src/` y publica. Para
 activarlo una sola vez:
 

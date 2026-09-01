@@ -1,6 +1,6 @@
 # Poner la base de datos en marcha
 
-El esquema está escrito y **verificado contra un PostgreSQL real** (53
+El esquema está escrito y **verificado contra un PostgreSQL real** (56
 comprobaciones, ver `npm run test:db`). Lo único que falta es tu proyecto de
 Supabase, porque crear una cuenta a tu nombre no lo puede hacer nadie más.
 

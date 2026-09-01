@@ -265,3 +265,37 @@ test('una foto sin GPS sigue dando fecha', () => {
   assert.ok(Number.isFinite(r.fecha));
   assert.equal(r.lat, null);
 });
+
+// El nivel "en vivo" es el unico que no deduce nada: la app misma grabo.
+test('grabar dentro de la app supera a cualquier archivo adjuntado', () => {
+  const enVivo = evaluarEvidencia({ tipo: 'video', enVivo: true });
+  assert.equal(enVivo.nivel, 'envivo');
+  assert.ok(enVivo.factor > NIVELES_EVIDENCIA.video.factor,
+    'tiene que valer mas que un video elegido del carrete');
+  assert.equal(enVivo.sospecha, 0);
+  assert.match(enVivo.motivos.join(' '), /no se pudo elegir de la galeria/);
+});
+
+test('lo grabado en vivo no necesita EXIF ni pasa por el detector de duplicados', () => {
+  // Un video grabado ahora mismo no tiene EXIF de camara, y compararlo con
+  // hashes previos no tendria sentido: no existia antes de pulsar el boton.
+  const r = evaluarEvidencia({
+    tipo: 'video', enVivo: true, exif: null, fechaArchivo: null,
+    hash: '0000000000000000', hashesPrevios: ['0000000000000000'],
+  });
+  assert.equal(r.nivel, 'envivo', 'un hash repetido no lo degrada');
+  assert.equal(r.duplicado, null);
+});
+
+test('el analisis de movimiento se cuenta como motivo cuando existe', () => {
+  const r = evaluarEvidencia({
+    tipo: 'video', enVivo: true,
+    movimiento: { regimen: 'corriendo', etiqueta: 'Corriendo', motivo: '168 pasos por minuto: ritmo de carrera.' },
+  });
+  assert.match(r.motivos.join(' '), /corriendo/i);
+  assert.match(r.motivos.join(' '), /168 pasos/);
+
+  // Y si el sensor no dijo nada, no se inventa una linea.
+  const sin = evaluarEvidencia({ tipo: 'video', enVivo: true, movimiento: { regimen: 'desconocido' } });
+  assert.equal(sin.motivos.length, 1);
+});

@@ -133,6 +133,7 @@ with comprobaciones as (
      and privilege_type = 'UPDATE'
      and not (table_name = 'perfiles'
               and column_name::text in ('nombre','pais','publico','mote'))
+     and not (table_name = 'megusta' and column_name::text = 'tipo')
 
   -- 8. Estado de los datos --------------------------------------------------
   union all

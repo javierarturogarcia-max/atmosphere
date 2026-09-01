@@ -18,7 +18,7 @@ import { vistaComunidad } from './vistas/comunidad.js';
 import { vistaCiencia } from './vistas/ciencia.js';
 import { vistaPerfil } from './vistas/perfil.js';
 import { vistaBienvenida, tocaBienvenida, marcarVisto } from './vistas/bienvenida.js';
-import { recogerSesionDeURL } from '../core/nube.js';
+import { recogerSesionDeURL, haySesion, miPerfil } from '../core/nube.js';
 import { motePendiente, guardarMotePendiente, fijarMote } from '../core/social.js';
 
 const RUTAS = [
@@ -153,11 +153,34 @@ export function iniciar(raiz) {
   // El ajuste local (nombre y pais) solo se pregunta a quien decide explorar
   // sin cuenta. Quien crea cuenta ya lo dice en el alta, y sacarle un modal
   // encima de la portada dejaba sus botones sin poder pulsarse.
-  if (!guardado && rutaActual !== 'bienvenida') setTimeout(() => ajusteLocal(ctx), 350);
+  //
+  // Y a quien entra en un movil nuevo tampoco: su nombre y su pais ya estan en
+  // el servidor. Preguntarselos otra vez seria pedirle que repita lo que la
+  // app ya sabe, asi que se traen de su perfil.
+  if (!guardado && rutaActual !== 'bienvenida') {
+    if (haySesion()) traerPerfilDeLaNube(ctx);
+    else setTimeout(() => ajusteLocal(ctx), 350);
+  }
 
   anunciarVuelta(vueltaDelCorreo, ctx);
 
   return ctx;
+}
+
+/**
+ * Rellena el perfil local con el que ya existe en el servidor.
+ *
+ * El pais no es un adorno: de el sale la intensidad de carbono de la red
+ * electrica, y sin el los calculos usarian el promedio mundial. Si la nube no
+ * responde no pasa nada — se queda el valor por defecto y se puede cambiar en
+ * Perfil— asi que el fallo es silencioso a proposito.
+ */
+function traerPerfilDeLaNube(ctx) {
+  miPerfil().then((p) => {
+    if (!p?.nombre) return;
+    ctx.almacen.actualizarPerfil({ nombre: p.nombre, pais: p.pais || 'WW' });
+    ctx.refrescar();
+  }).catch(() => { /* se queda el perfil por defecto */ });
 }
 
 /**

@@ -29,6 +29,7 @@ export const NIVELES_EVIDENCIA = Object.freeze({
   fechada:     { factor: 1.25, etiqueta: 'Evidencia fechada',          color: '#38bdf8' },
   situada:     { factor: 1.40, etiqueta: 'Evidencia fechada y situada', color: '#34d399' },
   video:       { factor: 1.45, etiqueta: 'Video verificado',           color: '#c084fc' },
+  envivo:      { factor: 1.60, etiqueta: 'Grabado en vivo',            color: '#22d3ee' },
   sospechosa:  { factor: 1.00, etiqueta: 'Evidencia no valida',        color: '#f87171' },
 });
 
@@ -114,6 +115,23 @@ export function evaluarEvidencia(p = {}) {
 
   if (!tipo) {
     return { nivel: 'ninguna', ...NIVELES_EVIDENCIA.ninguna, motivos: ['No se adjunto ninguna prueba.'], sospecha: 0, duplicado: null };
+  }
+
+  // --- Grabado dentro de la app: el nivel mas alto y el mas simple ---------
+  // Todo lo demas de esta funcion existe porque un archivo puede venir de
+  // cualquier sitio: se leen metadatos, se compara la fecha, se busca la copia.
+  // Cuando la propia aplicacion abrio la camara y grabo, no hubo archivo previo
+  // que elegir. No hay nada que deducir, y por eso vale mas que cualquier
+  // heuristica: no es una pista sobre el origen, es el origen.
+  if (p.enVivo) {
+    const m = ['Grabado dentro de la app: no se pudo elegir de la galeria.'];
+    if (p.movimiento?.regimen && p.movimiento.regimen !== 'desconocido') {
+      m.push(`El sensor midio: ${p.movimiento.etiqueta.toLowerCase()}. ${p.movimiento.motivo}`);
+    }
+    return {
+      nivel: 'envivo', ...NIVELES_EVIDENCIA.envivo, motivos: m, sospecha: 0, duplicado: null,
+      detalle: { fechada: true, situada: false, tieneExif: false, tipo: p.tipo, enVivo: true },
+    };
   }
 
   // --- Duplicado: descalifica antes que nada -------------------------------

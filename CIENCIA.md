@@ -357,6 +357,97 @@ La subida es **idempotente**: la clave primaria de `registros` es el id
 generado en el dispositivo, así que reenviar un lote tras un corte de red no
 duplica nada.
 
+## 8quinquies-bis. Qué se puede validar de verdad, y qué no
+
+La pregunta natural de cualquiera que use esto es: *¿se puede comprobar que la
+acción es real?* La respuesta honesta tiene dos mitades muy distintas, y
+mezclarlas es el error que comete casi todo el sector.
+
+| Acción declarada | ¿Lo ve un sensor? | Qué se puede afirmar |
+|---|---|---|
+| Correr, caminar | **Sí** | Cadencia de pasos del acelerómetro + velocidad del GPS |
+| Ir en bici | **Sí** | Perfil de velocidad del GPS |
+| Plantar un árbol | **A medias** | El cuándo y el dónde, no el qué |
+| Reciclar plástico | **No** | Distinguir plástico de vidrio exige un modelo de visión |
+| Beber agua del grifo | **No** | Ningún sensor del teléfono lo ve |
+
+Por eso la verificación se separa en **dos ejes independientes**, y ninguno
+pretende ser el otro.
+
+### Eje 1 — Autenticidad de la prueba (aplica a todo)
+
+La pregunta aquí no es *qué* hiciste, sino *si este archivo se produjo aquí y
+ahora*. Todo el aparato de EXIF, hash perceptual y coherencia GPS existe porque
+un archivo elegido con un selector puede venir de la galería, de un grupo de
+mensajería o de una búsqueda de imágenes.
+
+Grabar dentro de la aplicación cambia la naturaleza del problema en vez de
+afinar la heurística: **no hay archivo previo que elegir**. La cámara se abre
+con `getUserMedia`, el clip lo produce `MediaRecorder`, y lo que se guarda es
+esa captura. No es una pista sobre el origen del archivo; es el origen.
+
+Por eso `envivo` (×1,60) está por encima de `video` (×1,45): el vídeo adjuntado
+sigue siendo un archivo del que solo sabemos lo que sus metadatos dicen, y los
+metadatos se editan con herramientas comunes.
+
+Tiene además una ventaja práctica que no es menor: el atributo `capture` de un
+`<input file>` abre la cámara en muchos móviles, pero no en todos, y en el
+escritorio no hace nada. `getUserMedia` la abre siempre.
+
+### Eje 2 — Coherencia con la acción (solo donde hay sensor)
+
+Mientras se graba, se muestrea el acelerómetro. El módulo de la aceleración
+menos su media —que en una ventana de segundos es esencialmente la gravedad—
+deja la oscilación de los pasos. Contando picos con un periodo refractario de
+250 ms sale la cadencia.
+
+```
+cadencia (pasos/min)   régimen
+      < 40             quieto
+     80 – 135          caminando
+    135 – 145          zona ambigua: no se decide
+    145 – 220          corriendo
+```
+
+La franja de 135 a 145 no es una imprecisión que haya que pulir: la marcha
+rápida y el trote lento **se parecen de verdad**, y ahí el sistema dice
+*«entre marcha rápida y trote»* en lugar de escoger. Es la misma disciplina que
+rige la proyección de emisiones, que se marca como no fiable cuando la serie no
+la sostiene.
+
+**Manda la cadencia, no la intensidad.** La cadencia tiene significado
+fisiológico y está acotada entre personas; la intensidad depende de si llevas el
+teléfono en la mano, en el bolsillo o en un brazalete. Usarla como filtro dejaba
+sin clasificar a quien corre con el móvil bien sujeto, así que solo modula la
+confianza.
+
+### La regla que evita el sistema punitivo
+
+El contraste entre lo declarado y lo medido **confirma, nunca descalifica**.
+Alguien puede reciclar de pie y quieto, grabar con el teléfono apoyado, o tener
+el sensor bloqueado por el navegador. Un sistema que castigue esos casos
+castiga a quien no hizo nada malo, que es peor error que dejar pasar una trampa.
+
+La regularidad del paso —el coeficiente de variación de los intervalos,
+invertido— alimenta la confianza, no el veredicto. Agitar el teléfono puede
+imitar una cadencia; imitar además un ritmo humano sostenido es bastante más
+trabajo que hacer la acción.
+
+### Y lo que no se puede validar
+
+Para reciclar, beber agua o comer verduras no hay sensor, y no lo habrá en un
+teléfono. Podría entrenarse un clasificador de imágenes, pero acertaría a medias
+y añadiría megabytes de modelo a una aplicación que presume de no tener
+dependencias — y un clasificador que se equivoca acusando es peor que no tener
+ninguno.
+
+Ahí la verificación es de otra clase, y es la razón de que la capa social exista:
+**lo ve la comunidad**. Un vídeo de ocho segundos separando plástico, grabado en
+vivo, visto por la clase entera, tiene una forma de validación que ningún
+acelerómetro da. No es criptográfica, es social, y para este problema es la
+adecuada.
+
+
 ## 8sexies. La capa social: por qué el aura no son puntos
 
 La comunidad es la parte del proyecto donde la gamificación puede estropear la
@@ -394,6 +485,14 @@ que un me gusta retirado o una publicación oculta por reportes dejarían aura
 fantasma. Al derivarla de cero cada vez, la aura siempre refleja el estado
 actual del muro. Es el mismo principio que rige los puntos: el servidor no
 guarda lo que le mandan, recalcula lo que se deduce de los hechos.
+
+Las cinco reacciones —me gusta, me encanta, corazón, bien hecho, me inspira—
+**valen exactamente lo mismo en aura**, y no es un descuido. Si el corazón
+puntuara más que el me gusta, la gente elegiría por lo que suma y no por lo que
+siente, y el dato dejaría de decir nada sobre la publicación. Lo que cambia es
+el matiz que se expresa, no el precio. Una persona reacciona una sola vez a cada
+publicación —lo garantiza la clave primaria— y puede cambiar de matiz sin que el
+recuento se mueva.
 
 El `+5` por prueba verificada es deliberado: hace que la publicación más
 rentable en aura sea, precisamente, la que trae metadatos coherentes. La

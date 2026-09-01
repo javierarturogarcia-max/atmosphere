@@ -8,6 +8,7 @@ import { claveDia } from '../../core/rachas.js';
 import { iniciarSeguimiento, analizarTraza, verificarContra } from '../../core/gps.js';
 import { parsearTraza, metadatosTraza } from '../../core/gpx.js';
 import { procesarMedio, selectorMedio, guardarMedio, LIMITE_ARCHIVO_MB } from '../medios.js';
+import { capturar, hayCamaraEnApp, SEGUNDOS_CLIP } from '../camara.js';
 import { evaluarEvidencia, NIVELES_EVIDENCIA } from '../../core/evidencia.js';
 
 let filtroCat = 'todas';
@@ -416,6 +417,7 @@ function construirMedios(a, estado, alAdjuntar) {
         tipo: actual.tipo, exif: actual.exif, fechaArchivo: actual.fechaArchivo,
         hash: actual.hash, hashesPrevios: estado.medios || [],
         ancho: actual.ancho, alto: actual.alto, bytes: actual.bytes,
+        enVivo: actual.enVivo, movimiento: actual.movimiento,
       });
       const meta = NIVELES_EVIDENCIA[ev.nivel];
 
@@ -453,17 +455,50 @@ function construirMedios(a, estado, alAdjuntar) {
       }
     });
 
+    // Grabar dentro de la app abre la camara en cualquier dispositivo y, sobre
+    // todo, hace imposible elegir un archivo de la galeria. Por eso va primero
+    // y adjuntar queda como alternativa, no al reves.
+    const grabar = async (modo) => {
+      const r = await capturar({ modo, segundos: SEGUNDOS_CLIP });
+      if (!r) return;
+      pintar(null, true);
+      try {
+        const archivo = new File([r.blob], `prueba.${modo === 'foto' ? 'jpg' : 'webm'}`, { type: r.tipo });
+        const m = await procesarMedio(archivo);
+        m.id = `m_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+        m.enVivo = true;
+        m.movimiento = r.analisis;
+        if (actual?.url) URL.revokeObjectURL(actual.url);
+        actual = m;
+        alAdjuntar(m);
+        pintar();
+      } catch (e) {
+        pintar(e.message || 'No se pudo procesar lo grabado.');
+      }
+    };
+
+    const enApp = hayCamaraEnApp();
     caja.appendChild(el('div', { clase: 'fila envuelve', estilo: 'gap:7px' }, [
-      el('button', {
+      enApp ? el('button', {
         clase: `btn s${actual ? '' : ' primario'}`,
-        texto: actual ? '🔄 Cambiar prueba' : '📷 Hacer foto o video',
+        texto: `🎥 Grabar ${SEGUNDOS_CLIP} s ahora`,
+        onclick: () => grabar('video'),
+      }) : null,
+      enApp ? el('button', { clase: 'btn s', texto: '📸 Foto ahora', onclick: () => grabar('foto') }) : null,
+      el('button', {
+        clase: `btn s${!enApp && !actual ? ' primario' : ''}`,
+        texto: '📎 Adjuntar archivo',
         onclick: () => input.click(),
       }),
       input,
     ]));
 
-    caja.appendChild(el('div', { clase: 'mini', estilo: 'margin-top:9px' },
-      [`En el movil se abre la camara directamente. Se guarda una miniatura, no el original, para no llenar el almacenamiento (limite ${LIMITE_ARCHIVO_MB} MB por archivo). Nada se envia a ningun servidor.`]));
+    caja.appendChild(el('div', { clase: 'mini', estilo: 'margin-top:9px' }, [
+      enApp
+        ? `Grabar aqui abre la camara directamente y vale mas (×${NIVELES_EVIDENCIA.envivo.factor}): lo que graba la app no puede venir de la galeria. Mientras grabas se mide el movimiento, asi que caminar o correr quedan confirmados por el sensor. Adjuntar un archivo sigue valiendo, con su nivel segun los metadatos.`
+        : `Este navegador no permite grabar aqui; en el movil el boton de adjuntar abre la camara. Limite ${LIMITE_ARCHIVO_MB} MB por archivo.`,
+      ' Se guarda una miniatura, no el original, y nada sale de tu dispositivo salvo que publiques la accion.',
+    ]));
   };
 
   pintar();
