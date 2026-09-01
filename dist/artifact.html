@@ -319,6 +319,44 @@ tr.destacada td { background: rgba(52, 211, 153, 0.09); font-weight: 650; }
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
 
+/* ── Bienvenida ─────────────────────────────────────────────────────────────
+   La portada de quien abre el enlace por primera vez. Se apoya en lo que ya
+   existe (.tarjeta, .btn, label.campo, .rejilla) y solo anade lo que falta. */
+.fila.centrada { justify-content: center; }
+.btn.grande { padding: 12px 22px; font-size: 15px; }
+.btn.plano { background: none; border-color: transparent; color: var(--texto-2); }
+.btn.plano:hover:not(:disabled) { background: var(--superficie); color: var(--texto); }
+
+.hero-bienvenida { padding: 34px 22px; }
+.caja-acceso { max-width: 420px; margin: 0 auto; }
+.campos { display: flex; flex-direction: column; gap: 13px; margin-bottom: 10px; }
+
+/* Pista de una linea bajo un campo. No usa .aviso porque aquella es un bloque
+   con marco y relleno: aqui estorbaria mas de lo que informa. */
+.pista { font-size: 12px; min-height: 16px; margin: 2px 0 0; color: var(--texto-3); }
+.pista.ok  { color: var(--verde); }
+.pista.mal { color: var(--ambar); }
+
+/* Quien ya esta dentro: una app social vacia no invita a entrar. */
+.fila-avatares { display: flex; flex-wrap: wrap; gap: 8px; }
+.avatar-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 11px 5px 5px; border-radius: 999px;
+  background: var(--superficie); border: 1px solid var(--borde);
+  font-size: 12.5px; color: var(--texto-2);
+}
+.avatar-inicial {
+  width: 22px; height: 22px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: linear-gradient(135deg, var(--verde), var(--cian));
+  color: #04140d; font-weight: 800; font-size: 11px;
+}
+
+@media (max-width: 620px) {
+  .hero-bienvenida { padding: 24px 14px; }
+  .btn.grande { width: 100%; }
+}
+
 </style>
 <div id="app">
   <div style="display:flex;align-items:center;justify-content:center;min-height:70vh;flex-direction:column;gap:14px">
@@ -7397,6 +7435,31 @@ class ErrorNube extends Error {
 // ============================================================== configuracion
 
 /**
+ * Proyecto al que se conecta la app si nadie configura otro.
+ *
+ * SIN ESTO NO HAY RED SOCIAL. Pedirle a cada persona que pegue una URL y una
+ * clave antes de poder crear su cuenta convierte el primer paso en una tarea
+ * de programador: la companera a la que le pasas el enlace se encuentra un
+ * formulario de configuracion en vez de un "crear cuenta", y ahi se acaba.
+ * Con esto, quien abre el enlace ya esta conectado y solo elige su mote.
+ *
+ * LA CLAVE PUBLICA VA AQUI A PROPOSITO. Supabase la llama "publishable" justo
+ * porque esta pensada para vivir en el cliente: cualquiera que abra las
+ * herramientas del navegador la vera en cualquier aplicacion que use Supabase.
+ * Lo que protege los datos no es esconderla —seria imposible— sino las
+ * politicas RLS, que es donde esta puesto el esfuerzo de este proyecto. La
+ * clave SECRETA es otra cosa y nunca debe aparecer aqui; `esClaveSecreta()` la
+ * rechaza si alguien la pega por error.
+ *
+ * Para apuntar a otro proyecto: cambiar estas dos lineas, o pegar los datos en
+ * Perfil -> Nube, que tiene preferencia sobre este valor.
+ */
+const NUBE_POR_DEFECTO = {
+  url: 'https://anrebwrrkubkkaaunyna.supabase.co',
+  anonKey: 'sb_publishable_mU-ALe_ht0qx84oWwvGEnQ_rBMzXRu0',
+};
+
+/**
  * Detecta una clave SECRETA pegada por error donde va la publica.
  *
  * Es el error mas grave posible en esta pantalla: la clave secreta salta TODAS
@@ -7460,7 +7523,21 @@ function configurar({ url, anonKey }) {
   return { url: u, formato: esNueva ? 'publishable' : 'anon-jwt' };
 }
 
-function configuracion() { return leerJSON(CLAVE_CONFIG, null); }
+/**
+ * Configuracion vigente: la que haya guardado la persona y, si no hay, la del
+ * proyecto por defecto. Nunca devuelve null salvo que se haya vaciado el
+ * proyecto por defecto en el codigo.
+ */
+function configuracion() {
+  const propia = leerJSON(CLAVE_CONFIG, null);
+  if (propia?.url && propia?.anonKey) return propia;
+  const { url, anonKey } = NUBE_POR_DEFECTO;
+  return url && anonKey ? { url, anonKey, porDefecto: true } : null;
+}
+
+/** Solo la configurada a mano. La pantalla de ajustes necesita distinguirlas. */
+function configuracionPropia() { return leerJSON(CLAVE_CONFIG, null); }
+
 function estaConfigurada() { return !!configuracion(); }
 function sesion() { return leerJSON(CLAVE_SESION, null); }
 function haySesion() { const s = sesion(); return !!(s && s.access_token && s.perfilId); }
@@ -7470,6 +7547,10 @@ function desconectar() {
   almacen.removeItem(CLAVE_SUBIDOS);
 }
 
+/**
+ * Borra la sesion y la configuracion propia. Si hay proyecto por defecto, la
+ * app vuelve a el en vez de quedarse sin nube.
+ */
 function olvidarTodo() {
   desconectar();
   almacen.removeItem(CLAVE_CONFIG);
@@ -7725,9 +7806,11 @@ function situarEnRanking(filas, miId) {
 }
 
   __exp.ErrorNube = ErrorNube;
+  __exp.NUBE_POR_DEFECTO = NUBE_POR_DEFECTO;
   __exp.esClaveSecreta = esClaveSecreta;
   __exp.configurar = configurar;
   __exp.configuracion = configuracion;
+  __exp.configuracionPropia = configuracionPropia;
   __exp.estaConfigurada = estaConfigurada;
   __exp.sesion = sesion;
   __exp.haySesion = haySesion;
@@ -7769,10 +7852,22 @@ function vistaNube(ctx) {
     texto: 'Opcional y desactivada por defecto. La app funciona entera sin cuenta: esto solo anade lo que en local es imposible, comparar con personas reales y no perder el historial al cambiar de movil. Tus fotos, notas y coordenadas nunca se envian.' }));
   raiz.appendChild(cuerpo);
 
+  // "Cambiar de proyecto" no puede depender de que estaConfigurada() pase a
+  // false: desde que la app trae un proyecto de serie, eso no ocurre nunca y
+  // el formulario quedaba inalcanzable. Es una decision de la vista, no del
+  // estado de la nube.
+  let cambiando = false;
+
   const pintar = async () => {
     cuerpo.innerHTML = '';
-    if (!api.estaConfigurada()) { paso1Configurar(cuerpo, pintar); return; }
-    if (!api.haySesion()) { paso2Cuenta(cuerpo, pintar, ctx); return; }
+    if (cambiando || !api.estaConfigurada()) {
+      paso1Configurar(cuerpo, () => { cambiando = false; pintar(); });
+      return;
+    }
+    if (!api.haySesion()) {
+      paso2Cuenta(cuerpo, (o) => { if (o?.cambiar) cambiando = true; pintar(); }, ctx);
+      return;
+    }
     await paso3Panel(cuerpo, pintar, ctx);
   };
 
@@ -7849,7 +7944,8 @@ function paso2Cuenta(cuerpo, repintar, ctx) {
       ]),
     ]),
     el('div', { clase: 'divisor' }),
-    el('button', { clase: 'btn s', texto: 'Cambiar de proyecto', onclick: () => { api.olvidarTodo(); repintar(); } }),
+    el('button', { clase: 'btn s', texto: 'Cambiar de proyecto',
+      onclick: () => { api.olvidarTodo(); repintar({ cambiar: true }); } }),
   ]));
 }
 
@@ -8303,6 +8399,64 @@ async function fijarMote(mote) {
   return v.mote;
 }
 
+/**
+ * Mote reservado durante un alta que quedo pendiente de confirmar el correo.
+ *
+ * Cuando el proyecto exige confirmacion, el alta no devuelve sesion y todavia
+ * no hay perfil al que ponerle el mote. Guardarlo aqui evita que la persona
+ * tenga que acordarse de volver a elegirlo tres dias despues, cuando por fin
+ * abra el correo.
+ */
+const CLAVE_MOTE_PENDIENTE = 'atmosphere.mote.pendiente.v1';
+
+/**
+ * Respaldo en memoria cuando no hay localStorage: navegacion privada, ajustes
+ * que bloquean el almacenamiento, o Node durante las pruebas. Sin esto, el
+ * mote reservado se perdia en silencio justo para quien mas cuesta recuperar.
+ */
+const almacen = (() => {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const sonda = '__atmosphere__';
+      localStorage.setItem(sonda, '1');
+      localStorage.removeItem(sonda);
+      return localStorage;
+    }
+  } catch { /* bloqueado: se usa el respaldo */ }
+  const mapa = new Map();
+  return {
+    getItem: (k) => (mapa.has(k) ? mapa.get(k) : null),
+    setItem: (k, v) => mapa.set(k, String(v)),
+    removeItem: (k) => mapa.delete(k),
+  };
+})();
+
+function guardarMotePendiente(mote) {
+  try {
+    if (mote) almacen.setItem(CLAVE_MOTE_PENDIENTE, String(mote));
+    else almacen.removeItem(CLAVE_MOTE_PENDIENTE);
+  } catch { /* sin almacenamiento */ }
+}
+
+function motePendiente() {
+  try { return almacen.getItem(CLAVE_MOTE_PENDIENTE) || null; } catch { return null; }
+}
+
+/**
+ * Quien ya esta dentro, para ensenarlo en la portada A QUIEN AUN NO TIENE
+ * CUENTA. Va contra la vista publica ranking_global y sin token, porque en ese
+ * momento no hay sesion: una portada de app social que no ensena a nadie no
+ * invita a entrar.
+ *
+ * Si el proyecto no le ha dado permiso de lectura al rol anonimo, esto falla y
+ * la portada lo asume sin romperse: es un adorno, no un requisito.
+ */
+async function vecindario(limite = 8) {
+  return llamarAPI('/rest/v1/rpc/vecindario', {
+    metodo: 'POST', autenticado: false, cuerpo: { n: Math.min(20, Math.max(1, limite)) },
+  });
+}
+
 /** Ranking por aura: quien mas contagia el habito. */
 async function rankingAura(limite = 30) {
   return llamarAPI(
@@ -8342,6 +8496,9 @@ function haceRato(iso) {
   __exp.alternarMeGusta = alternarMeGusta;
   __exp.reportar = reportar;
   __exp.fijarMote = fijarMote;
+  __exp.guardarMotePendiente = guardarMotePendiente;
+  __exp.motePendiente = motePendiente;
+  __exp.vecindario = vecindario;
   __exp.rankingAura = rankingAura;
   __exp.haceRato = haceRato;
 });
@@ -8371,10 +8528,13 @@ function vistaComunidad(ctx) {
     if (!api.haySesion()) {
       cuerpo.appendChild(el('div', { clase: 'tarjeta centrado' }, [
         el('div', { estilo: 'font-size:44px', texto: '🌍' }),
-        el('h2', { estilo: 'margin:11px 0 5px', texto: 'Conecta para entrar en la comunidad' }),
+        el('h2', { estilo: 'margin:11px 0 5px', texto: 'Únete para entrar en la comunidad' }),
         el('p', { clase: 'mini', estilo: 'margin-bottom:15px' },
-          ['El muro necesita cuenta: es lo unico de la app que no puede funcionar solo en tu dispositivo.']),
-        el('button', { clase: 'btn primario', texto: '☁️ Ir a Nube y grupos', onclick: () => ctx.ir('nube') }),
+          ['El muro necesita cuenta: es lo unico de la app que no puede funcionar solo en tu dispositivo. Se tarda menos de un minuto.']),
+        el('div', { clase: 'fila centrada envuelve' }, [
+          el('button', { clase: 'btn primario', texto: '✨ Crear mi cuenta', onclick: () => ctx.ir('bienvenida') }),
+          el('button', { clase: 'btn', texto: 'Ya tengo cuenta', onclick: () => ctx.ir('bienvenida') }),
+        ]),
       ]));
       return;
     }
@@ -9216,6 +9376,379 @@ function vistaPerfil(ctx) {
   __exp.vistaPerfil = vistaPerfil;
 });
 
+__def("src/ui/vistas/bienvenida.js", function (__exp, __req) {
+/**
+ * bienvenida.js — La puerta de entrada.
+ *
+ * Antes, para tener cuenta habia que ir a "Nube y grupos", pegar una URL, pegar
+ * una clave y despues crear la cuenta. Eso funciona para quien construyo la
+ * app y para nadie mas: a la companera a la que le pasas el enlace le aparecia
+ * un formulario de configuracion donde esperaba un "crear cuenta".
+ *
+ * Aqui el orden es el de cualquier aplicacion social: se ve quien hay dentro,
+ * se elige un mote y se entra. La configuracion tecnica sigue existiendo, pero
+ * en Perfil y para quien la necesite.
+ */
+const { el, toast, esc } = __req("src/ui/componentes.js");
+const api = __req("src/core/nube.js");
+const social = __req("src/core/social.js");
+const { paisesOrdenados } = __req("src/data/paises.js");
+
+/** Sugiere un mote a partir del nombre: "Ana Garcia" -> "ana_garcia". */
+function moteSugerido(nombre) {
+  const limpio = String(nombre || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')  // quita acentos
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  if (limpio.length <= 15) return limpio.length >= 3 ? limpio : '';
+
+  // Recortar a 15 a pelo parte la ultima palabra por la mitad ("jose_maria_nune").
+  // Se corta por el ultimo guion bajo que quepa, si lo que queda sigue siendo
+  // un mote valido; solo si no lo hay se recorta a secas.
+  const corte = limpio.slice(0, 15);
+  const enPalabra = corte.slice(0, corte.lastIndexOf('_'));
+  const base = enPalabra.length >= 3 ? enPalabra : corte.replace(/_+$/, '');
+  return base.length >= 3 ? base : '';
+}
+
+/**
+ * Mensaje humano para un fallo de alta o de entrada.
+ *
+ * GoTrue responde en ingles y con matices que no ayudan a nadie ("Invalid
+ * login credentials" cuando el correo no esta confirmado, por ejemplo). Sin
+ * esta traduccion, el primer tropiezo de alguien que se acaba de registrar es
+ * un mensaje que no le dice que hacer.
+ */
+function mensajeDeAcceso(error) {
+  const m = String(error?.message || error || '').toLowerCase();
+  if (/already registered|already been registered|user already/.test(m)) {
+    return { texto: 'Ese correo ya tiene cuenta. Entra con tu contraseña.', ir: 'entrar' };
+  }
+  if (/invalid login|invalid credentials|credenciales/.test(m)) {
+    return { texto: 'Correo o contraseña incorrectos. Si acabas de registrarte, confirma antes el correo que te enviamos.' };
+  }
+  if (/email not confirmed|not confirmed/.test(m)) {
+    return { texto: 'Te falta confirmar el correo. Busca el mensaje de Supabase en tu bandeja (y en spam).' };
+  }
+  if (/password.*(6|short|least)/.test(m)) {
+    return { texto: 'La contraseña necesita al menos 6 caracteres.' };
+  }
+  if (/rate limit|too many/.test(m)) {
+    return { texto: 'Demasiados intentos seguidos. Espera un minuto y vuelve a probar.' };
+  }
+  if (/failed to fetch|network|red/.test(m)) {
+    return { texto: 'No se pudo contactar con el servidor. Revisa tu conexión.' };
+  }
+  return { texto: String(error?.message || 'No se pudo completar la operación.') };
+}
+
+// ---------------------------------------------------------------- la vista
+
+function vistaBienvenida(ctx) {
+  const raiz = el('div', { clase: 'bienvenida' });
+  let modo = api.haySesion() ? 'dentro' : 'inicio';
+
+  const pintar = () => {
+    raiz.innerHTML = '';
+    if (modo === 'dentro') raiz.appendChild(panelDentro(ctx, () => { modo = 'inicio'; pintar(); }));
+    else if (modo === 'crear') raiz.appendChild(formulario(ctx, 'crear', ir));
+    else if (modo === 'entrar') raiz.appendChild(formulario(ctx, 'entrar', ir));
+    else raiz.appendChild(portada(ctx, ir));
+  };
+  const ir = (m) => { modo = m; pintar(); };
+
+  pintar();
+  return raiz;
+}
+
+// ------------------------------------------------------------------ portada
+
+function portada(ctx, ir) {
+  const caja = el('div');
+
+  caja.appendChild(el('div', { clase: 'tarjeta centrado hero-bienvenida' }, [
+    el('div', { estilo: 'font-size:60px;line-height:1', texto: '🌍' }),
+    el('h1', { estilo: 'margin:14px 0 6px;font-size:30px', texto: 'Bienvenida a Atmosphere' }),
+    el('p', { clase: 'sub', estilo: 'max-width:44ch;margin:0 auto 20px' },
+      ['Convierte lo que ya haces bien por el planeta en impacto medido — y en algo que se comparte.']),
+    el('div', { clase: 'fila centrada envuelve' }, [
+      el('button', { clase: 'btn primario grande', texto: '✨ Crear mi cuenta', onclick: () => ir('crear') }),
+      el('button', { clase: 'btn grande', texto: 'Ya tengo cuenta', onclick: () => ir('entrar') }),
+    ]),
+    el('button', {
+      clase: 'btn plano s', estilo: 'margin-top:14px',
+      texto: 'Explorar sin cuenta →',
+      onclick: () => { marcarVisto(); ctx.ir('panel'); ctx.ajusteLocal?.(); },
+    }),
+  ]));
+
+  caja.appendChild(el('div', { clase: 'rejilla c3', estilo: 'margin-top:16px' }, [
+    reclamo('🎬', 'Un muro de buenas acciones', 'Graba un clip corto de lo que haces y llega a la comunidad.'),
+    reclamo('🔥', 'Farmea aura', 'Los me gusta dan aura: reputación por hacer las cosas, no por decirlas.'),
+    reclamo('🔬', 'Con ciencia detrás', 'Cada acción se mide en kg de CO₂e evitados, con su fuente citada.'),
+  ]));
+
+  caja.appendChild(quienHay());
+  return caja;
+}
+
+function reclamo(icono, titulo, texto) {
+  return el('div', { clase: 'tarjeta' }, [
+    el('div', { estilo: 'font-size:26px', texto: icono }),
+    el('h3', { estilo: 'margin:8px 0 4px;font-size:15px', texto: titulo }),
+    el('p', { clase: 'mini', texto }),
+  ]);
+}
+
+/**
+ * Quien ya esta dentro. Una app social vacia no invita a entrar; ver caras
+ * —aunque sean motes— es lo que convierte un formulario en una comunidad.
+ */
+function quienHay() {
+  const caja = el('div', { clase: 'tarjeta', estilo: 'margin-top:16px' });
+  caja.appendChild(el('h3', { estilo: 'margin:0 0 10px;font-size:15px', texto: '🌱 Ya están dentro' }));
+  const lista = el('div', { clase: 'mini', texto: 'Cargando…' });
+  caja.appendChild(lista);
+
+  social.vecindario(8).then((filas) => {
+    lista.innerHTML = '';
+    if (!filas?.length) {
+      lista.appendChild(el('p', { clase: 'mini',
+        texto: 'Nadie todavía. Puedes ser la primera persona en publicar algo.' }));
+      return;
+    }
+    lista.appendChild(el('div', { clase: 'fila-avatares' },
+      filas.map((f) => el('div', { clase: 'avatar-chip', title: `${f.puntos || 0} puntos` }, [
+        el('span', { clase: 'avatar-inicial', texto: (f.mote || f.nombre || '?').slice(0, 1).toUpperCase() }),
+        el('span', { texto: f.mote ? `@${esc(f.mote)}` : esc(f.nombre || 'Guardián') }),
+      ]))));
+  }).catch(() => {
+    lista.textContent = '';
+    lista.appendChild(el('p', { clase: 'mini', texto: 'Sé la primera persona en entrar.' }));
+  });
+
+  return caja;
+}
+
+// -------------------------------------------------------------- formularios
+
+function formulario(ctx, tipo, ir) {
+  const crear = tipo === 'crear';
+  const caja = el('div', { clase: 'tarjeta caja-acceso' });
+
+  caja.appendChild(el('button', {
+    clase: 'btn plano s', texto: '← Volver', onclick: () => ir('inicio'),
+  }));
+  caja.appendChild(el('h2', { estilo: 'margin:10px 0 4px',
+    texto: crear ? 'Crea tu cuenta' : 'Entra en tu cuenta' }));
+  caja.appendChild(el('p', { clase: 'mini', estilo: 'margin-bottom:16px',
+    texto: crear
+      ? 'Con esto guardas tu progreso, entras en el muro y puedes unirte a tu clase.'
+      : 'Tu progreso te está esperando.' }));
+
+  const nombre = entrada('Tu nombre', 'text', 'Ana García', 'nombre');
+  const mote = entrada('Tu mote', 'text', 'ana_verde', 'username');
+  const correo = entrada('Correo', 'email', 'ana@ejemplo.com', 'email');
+  const pais = el('select', { clase: 'entrada' }, paisesOrdenados().map((p) =>
+    el('option', { value: p.cod, selected: p.cod === 'SV', texto: `${p.nombre} — ${p.red} g CO2e/kWh` })));
+  const cajaPais = el('label', { clase: 'campo' }, [
+    el('span', { clase: 'mini', texto: 'Tu país' }), pais,
+    el('span', { clase: 'pista', texto: 'Fija la intensidad de carbono de tu red eléctrica.' }),
+  ]);
+  const clave = entrada('Contraseña', 'password', 'mínimo 6 caracteres',
+    crear ? 'new-password' : 'current-password');
+
+  const avisoMote = el('p', { clase: 'pista' });
+  if (crear) {
+    // El mote se propone solo a partir del nombre, pero deja de proponerse en
+    // cuanto la persona lo toca: sobrescribir lo que alguien acaba de escribir
+    // es de las cosas que mas molestan de un formulario.
+    let tocado = false;
+    mote.campo.addEventListener('input', () => { tocado = true; revisarMote(); });
+    nombre.campo.addEventListener('input', () => {
+      if (tocado) return;
+      mote.campo.value = moteSugerido(nombre.campo.value);
+      revisarMote();
+    });
+    function revisarMote() {
+      const v = social.validarMote(mote.campo.value);
+      avisoMote.textContent = mote.campo.value && !v.ok ? v.motivo
+        : (v.ok ? `Quedarás como @${v.mote}` : '');
+      avisoMote.className = v.ok ? 'pista ok' : 'pista mal';
+    }
+  }
+
+  caja.appendChild(el('div', { clase: 'campos' }, crear
+    ? [nombre.caja, mote.caja, avisoMote, cajaPais, correo.caja, clave.caja]
+    : [correo.caja, clave.caja]));
+
+  const error = el('p', { clase: 'pista mal', estilo: 'min-height:18px' });
+  caja.appendChild(error);
+
+  const enviar = el('button', { clase: 'btn primario grande bloque',
+    texto: crear ? 'Crear cuenta' : 'Entrar' });
+  caja.appendChild(enviar);
+
+  caja.appendChild(el('button', {
+    clase: 'btn plano s', estilo: 'margin-top:12px',
+    texto: crear ? '¿Ya tienes cuenta? Entra' : '¿No tienes cuenta? Créala',
+    onclick: () => ir(crear ? 'entrar' : 'crear'),
+  }));
+
+  const accion = async () => {
+    error.textContent = '';
+    const datos = {
+      nombre: nombre.campo.value.trim() || 'Guardián',
+      mote: mote.campo.value.trim().toLowerCase(),
+      correo: correo.campo.value.trim(),
+      clave: clave.campo.value,
+      pais: pais.value,
+    };
+    if (crear) {
+      const v = social.validarMote(datos.mote);
+      if (!v.ok) { error.textContent = `Mote: ${v.motivo}`; mote.campo.focus(); return; }
+      datos.mote = v.mote;
+    }
+    if (!datos.correo.includes('@')) { error.textContent = 'Escribe un correo válido.'; correo.campo.focus(); return; }
+    if (datos.clave.length < 6) { error.textContent = 'La contraseña necesita al menos 6 caracteres.'; clave.campo.focus(); return; }
+
+    enviar.disabled = true;
+    enviar.textContent = crear ? 'Creando…' : 'Entrando…';
+    try {
+      if (crear) await altaCompleta(ctx, datos);
+      else await entradaCompleta(ctx, datos);
+    } catch (e) {
+      const m = mensajeDeAcceso(e);
+      error.textContent = m.texto;
+      if (m.ir) setTimeout(() => ir(m.ir), 1800);
+    } finally {
+      enviar.disabled = false;
+      enviar.textContent = crear ? 'Crear cuenta' : 'Entrar';
+    }
+  };
+
+  enviar.addEventListener('click', accion);
+  for (const c of [nombre, mote, correo, clave]) {
+    c.campo.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') accion(); });
+  }
+  return caja;
+}
+
+function entrada(etiqueta, tipo, marcador, autocomplete) {
+  const campo = el('input', { type: tipo, placeholder: marcador, autocomplete, clase: 'entrada' });
+  const caja = el('label', { clase: 'campo' }, [
+    el('span', { clase: 'mini', texto: etiqueta }),
+    campo,
+  ]);
+  return { caja, campo };
+}
+
+// ------------------------------------------------------------------ acciones
+
+/**
+ * Alta: cuenta y mote en un solo paso desde fuera.
+ *
+ * El mote no siempre se puede poner al momento: si el proyecto exige confirmar
+ * el correo, el alta no devuelve sesion y todavia no hay a quien ponerselo. En
+ * ese caso se guarda y se aplica solo en la primera entrada, para que la
+ * persona no tenga que acordarse de volver a elegirlo.
+ */
+async function altaCompleta(ctx, { nombre, mote, correo, clave, pais = 'WW' }, deps = {}) {
+  const crearCuenta = deps.crearCuenta || api.crearCuenta;
+  const fijarMote = deps.fijarMote || social.fijarMote;
+  const avisar = deps.avisar || toast;
+  const r = await crearCuenta(correo, clave, { nombre, pais });
+
+  // El perfil local es el que lee toda la app: el motor de impacto saca de
+  // aqui la intensidad de la red electrica. Guardarlo solo en el servidor
+  // dejaria los calculos con el valor mundial por defecto hasta la primera
+  // sincronizacion.
+  ctx?.almacen?.actualizarPerfil?.({ nombre, pais });
+
+  if (r?.confirmacionPendiente) {
+    social.guardarMotePendiente(mote);
+    avisar({
+      titulo: 'Revisa tu correo', icono: '📬', duracion: 9000,
+      texto: `Te enviamos un mensaje a ${correo}. Confírmalo y vuelve a entrar: tu mote @${mote} te está reservado.`,
+    });
+    return { confirmacionPendiente: true };
+  }
+
+  try {
+    await fijarMote(mote);
+  } catch (e) {
+    // La cuenta ya existe; el mote es lo unico que fallo. Se dice y se sigue.
+    avisar({ titulo: 'Cuenta creada', tipo: 'aviso', icono: '⚠️',
+      texto: `${e.message} Puedes elegir otro desde Comunidad.` });
+    ctx?.refrescar?.();
+    return { confirmacionPendiente: false, mote: null };
+  }
+
+  avisar({ titulo: `¡Hola, @${mote}!`, icono: '🎉',
+    texto: 'Ya eres parte de Atmosphere. Registra tu primera acción.' });
+  ctx?.ir?.('registrar');
+  return { confirmacionPendiente: false, mote };
+}
+
+/** Entrada: aplica el mote reservado si el alta lo dejo pendiente. */
+async function entradaCompleta(ctx, { correo, clave }, deps = {}) {
+  const entrar = deps.entrar || api.entrar;
+  const fijarMote = deps.fijarMote || social.fijarMote;
+  const avisar = deps.avisar || toast;
+  await entrar(correo, clave);
+
+  const pendiente = social.motePendiente();
+  if (pendiente) {
+    try { await fijarMote(pendiente); } catch { /* lo elegira en Comunidad */ }
+    social.guardarMotePendiente(null);
+  }
+  avisar({ titulo: '¡Bienvenida de vuelta!', icono: '👋', texto: 'Tu progreso sigue aquí.' });
+  ctx?.ir?.('panel');
+  return { ok: true };
+}
+
+// --------------------------------------------------------------- ya dentro
+
+function panelDentro(ctx, salir) {
+  const caja = el('div', { clase: 'tarjeta centrado' });
+  const s = api.sesion();
+  caja.appendChild(el('div', { estilo: 'font-size:44px', texto: '✅' }));
+  caja.appendChild(el('h2', { estilo: 'margin:10px 0 4px', texto: 'Ya has entrado' }));
+  caja.appendChild(el('p', { clase: 'mini', texto: s?.email || '' }));
+  caja.appendChild(el('div', { clase: 'fila centrada envuelve', estilo: 'margin-top:16px' }, [
+    el('button', { clase: 'btn primario', texto: '🎬 Ir a la comunidad', onclick: () => ctx.ir('comunidad') }),
+    el('button', { clase: 'btn', texto: 'Cerrar sesión', onclick: () => { api.desconectar(); salir(); } }),
+  ]));
+  return caja;
+}
+
+// ------------------------------------------------------- primera visita
+
+const CLAVE_VISTO = 'atmosphere.bienvenida.vista.v1';
+
+/** Si toca enseñar la portada: sin sesion y sin haberla saltado antes. */
+function tocaBienvenida(hayS = api.haySesion(), leer = leerVisto) {
+  return !hayS && !leer();
+}
+
+function marcarVisto() {
+  try { localStorage.setItem(CLAVE_VISTO, '1'); } catch { /* sin almacenamiento */ }
+}
+
+function leerVisto() {
+  try { return localStorage.getItem(CLAVE_VISTO) === '1'; } catch { return false; }
+}
+
+  __exp.moteSugerido = moteSugerido;
+  __exp.mensajeDeAcceso = mensajeDeAcceso;
+  __exp.vistaBienvenida = vistaBienvenida;
+  __exp.altaCompleta = altaCompleta;
+  __exp.entradaCompleta = entradaCompleta;
+  __exp.tocaBienvenida = tocaBienvenida;
+  __exp.marcarVisto = marcarVisto;
+});
+
 __def("src/ui/app.js", function (__exp, __req) {
 /**
  * app.js — Carcasa de la aplicacion: navegacion, enrutado y arranque.
@@ -9236,8 +9769,10 @@ const { vistaNube } = __req("src/ui/vistas/nube.js");
 const { vistaComunidad } = __req("src/ui/vistas/comunidad.js");
 const { vistaCiencia } = __req("src/ui/vistas/ciencia.js");
 const { vistaPerfil } = __req("src/ui/vistas/perfil.js");
+const { vistaBienvenida, tocaBienvenida, marcarVisto } = __req("src/ui/vistas/bienvenida.js");
 
 const RUTAS = [
+  { id: 'bienvenida', etiqueta: 'Bienvenida', icono: '👋', vista: vistaBienvenida, oculta: true },
   { id: 'panel',     etiqueta: 'Panel',      icono: '🏠', vista: vistaPanel },
   { id: 'registrar', etiqueta: 'Registrar',  icono: '➕', vista: vistaRegistrar },
   { id: 'misiones',  etiqueta: 'Misiones',   icono: '🎯', vista: vistaMisiones },
@@ -9258,8 +9793,14 @@ const RUTAS = [
 function iniciar(raiz) {
   const guardado = cargar();
   const almacen = crearAlmacen(guardado || estadoInicial());
-  let rutaActual = (location.hash || '#panel').slice(1);
-  if (!RUTAS.some((r) => r.id === rutaActual)) rutaActual = 'panel';
+  let rutaActual = (location.hash || '').slice(1);
+  if (!RUTAS.some((r) => r.id === rutaActual)) rutaActual = '';
+
+  // Primera visita sin cuenta: se entra por la portada, no por el panel. Es la
+  // diferencia entre una herramienta y una comunidad — y sin ella, crear una
+  // cuenta seguia escondido detras de una pantalla de configuracion.
+  if (!rutaActual) rutaActual = tocaBienvenida() ? 'bienvenida' : 'panel';
+  if (rutaActual === 'bienvenida') marcarVisto();
 
   document.documentElement.dataset.tema = almacen.get().perfil.tema || 'bosque';
 
@@ -9277,6 +9818,7 @@ function iniciar(raiz) {
       window.scrollTo(0, 0);
     },
     refrescar() { pintar(); },
+    ajusteLocal() { ajusteLocal(ctx); },
   };
 
   function botonNav(r, compacto = false) {
@@ -9300,6 +9842,7 @@ function iniciar(raiz) {
       ]),
     ]));
     for (const r of RUTAS) {
+      if (r.oculta) continue;
       lateral.appendChild(r.separador ? el('div', { clase: 'nav-sep' }) : botonNav(r));
     }
 
@@ -9316,7 +9859,7 @@ function iniciar(raiz) {
     // Antes solo mostraba cinco, asi que en el movil habia siete pantallas
     // —entre ellas la nube y los grupos— a las que no habia forma de llegar.
     inferior.innerHTML = '';
-    for (const r of RUTAS.filter((x) => !x.separador)) inferior.appendChild(botonNav(r, true));
+    for (const r of RUTAS.filter((x) => !x.separador && !x.oculta)) inferior.appendChild(botonNav(r, true));
     // Deja siempre a la vista la pestana activa, aunque este fuera de pantalla.
     requestAnimationFrame(() => {
       inferior.querySelector('.nav-item.activo')?.scrollIntoView({ inline: 'center', block: 'nearest' });
@@ -9325,7 +9868,7 @@ function iniciar(raiz) {
 
   function pintar() {
     pintarNav();
-    const ruta = RUTAS.find((r) => r.id === rutaActual) || RUTAS[0];
+    const ruta = RUTAS.find((r) => r.id === rutaActual) || RUTAS.find((r) => r.id === 'panel');
     contenido.innerHTML = '';
     try {
       contenido.appendChild(ruta.vista(ctx));
@@ -9348,13 +9891,20 @@ function iniciar(raiz) {
   raiz.appendChild(inferior);
   pintar();
 
-  if (!guardado) setTimeout(() => bienvenida(ctx), 350);
+  // El ajuste local (nombre y pais) solo se pregunta a quien decide explorar
+  // sin cuenta. Quien crea cuenta ya lo dice en el alta, y sacarle un modal
+  // encima de la portada dejaba sus botones sin poder pulsarse.
+  if (!guardado && rutaActual !== 'bienvenida') setTimeout(() => ajusteLocal(ctx), 350);
 
   return ctx;
 }
 
-/** Onboarding de primera ejecucion. */
-function bienvenida(ctx) {
+/**
+ * Ajuste local de primera ejecucion: nombre y pais para quien usa la app sin
+ * cuenta. El pais no es un adorno — determina la intensidad de carbono de la
+ * red electrica, y de ahi salen los kg de CO2e de media app.
+ */
+function ajusteLocal(ctx) {
   const nombre = el('input', { type: 'text', placeholder: 'Como quieres que te llamemos', maxlength: '24' });
   const selPais = el('select', {}, paisesOrdenados().map((p) =>
     el('option', { value: p.cod, selected: p.cod === 'WW', texto: `${p.nombre} — ${p.red} g CO2e/kWh` })));
@@ -9362,7 +9912,7 @@ function bienvenida(ctx) {
   const cerrar = modal(el('div', {}, [
     el('div', { clase: 'centrado', estilo: 'margin-bottom:19px' }, [
       el('div', { estilo: 'font-size:52px', texto: '🌍' }),
-      el('h2', { estilo: 'margin:9px 0 5px', texto: 'Bienvenido a Atmosphere' }),
+      el('h2', { estilo: 'margin:9px 0 5px', texto: 'Empecemos' }),
       el('p', { clase: 'mini' },
         ['Convierte lo que ya haces bien por el planeta en impacto medido y en progreso visible. Cada accion se traduce a kilos de CO2e, litros de agua y kilos de residuo con factores cientificos citados.']),
     ]),
@@ -9373,7 +9923,7 @@ function bienvenida(ctx) {
     ]),
     el('div', { clase: 'aviso info', estilo: 'margin-bottom:15px' }, [
       el('span', { texto: '🔒' }),
-      el('div', { texto: 'Sin cuenta, sin servidor, sin telemetria. Todo se guarda solo en este navegador.' }),
+      el('div', { texto: 'Sin cuenta y sin servidor: todo se guarda solo en este navegador. Puedes crear cuenta cuando quieras, desde Perfil.' }),
     ]),
     el('button', {
       clase: 'btn primario bloque', texto: 'Empezar',
@@ -9388,6 +9938,7 @@ function bienvenida(ctx) {
 }
 
   __exp.iniciar = iniciar;
+  __exp.ajusteLocal = ajusteLocal;
 });
 
 __def("src/main.js", function (__exp, __req) {

@@ -162,6 +162,41 @@ await prueba('pero su autor si sigue viendola (para poder borrarla)', () => como
   if (n !== 1) throw new Error(`Ana ve ${n} publicaciones`);
 }));
 
+console.log('\n── 6bis. El escaparate de la portada ──');
+// La funcion se ve SIN cuenta, asi que lo que devuelve es lo unico que este
+// proyecto ensena a un desconocido. Que no se cuele un perfil privado.
+await prueba('el escaparate solo ensena perfiles publicos', async () => {
+  await db.exec('reset role;');
+  await db.exec(`update public.perfiles set publico = false where id = '${LUIS}'`);
+  await db.exec(`update public.perfiles set publico = true  where id = '${ANA}'`);
+  await db.exec("reset role; set atmosphere.usuario = ''; set role anon;");
+  const filas = (await db.query('select * from public.vecindario(20)')).rows;
+  await db.exec('reset role;');
+  const nombres = filas.map((f) => f.nombre);
+  if (!filas.length) throw new Error('no devuelve nada');
+  const luis = (await db.query(`select nombre from public.perfiles where id='${LUIS}'`)).rows[0].nombre;
+  if (nombres.includes(luis)) throw new Error(`se colo el perfil privado de ${luis}`);
+});
+
+await prueba('el escaparate no expone ni correos ni registros', async () => {
+  await db.exec('reset role;');
+  const r = await db.query('select * from public.vecindario(1)');
+  const cols = r.fields.map((f) => f.name).sort();
+  const esperadas = ['aura', 'mote', 'nombre', 'puntos'];
+  if (JSON.stringify(cols) !== JSON.stringify(esperadas)) {
+    throw new Error(`devuelve ${cols.join(', ')} en vez de ${esperadas.join(', ')}`);
+  }
+});
+
+await prueba('el rol anonimo NO puede leer la tabla de perfiles', async () => {
+  await db.exec("reset role; set atmosphere.usuario = ''; set role anon;");
+  try {
+    await db.query('select * from public.perfiles');
+  } catch { await db.exec('reset role;'); return; }
+  await db.exec('reset role;');
+  throw new Error('anon lee public.perfiles: la funcion no estaria acotando nada');
+});
+
 console.log('\n── 7. Almacen de medios ──');
 await prueba('el cubo de evidencias existe y es publico', async () => {
   await db.exec('reset role;');

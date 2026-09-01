@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   configurar, configuracion, estaConfigurada, desconectar, olvidarTodo,
   pendientesDeSubir, aFilaRegistro, enLotes, situarEnRanking, generarCodigo,
-  esClaveSecreta, ErrorNube,
+  esClaveSecreta, ErrorNube, configuracionPropia, NUBE_POR_DEFECTO,
 } from '../src/core/nube.js';
 import { generador } from '../src/core/rng.js';
 
@@ -41,7 +41,7 @@ test('RECHAZA una clave secreta en los dos formatos', () => {
       (e) => e instanceof ErrorNube && e.codigo === 'clave_secreta' && /SECRETA/.test(e.message),
       `deberia rechazar ${mala.slice(0, 20)}`);
   }
-  assert.equal(estaConfigurada(), false, 'una clave secreta nunca se guarda');
+  assert.equal(configuracionPropia(), null, 'una clave secreta nunca se guarda');
 });
 
 test('corrige la clave pegada dos veces seguidas', () => {
@@ -172,7 +172,32 @@ test('sin configuracion, las operaciones fallan con un codigo claro', async () =
 test('desconectar borra la sesion pero conserva la configuracion', () => {
   configurar({ url: 'https://proj.supabase.co', anonKey: PUBLICA });
   desconectar();
-  assert.equal(estaConfigurada(), true, 'la URL del proyecto se conserva para volver a entrar');
+  assert.equal(configuracionPropia().url, 'https://proj.supabase.co',
+    'la URL del proyecto se conserva para volver a entrar');
   olvidarTodo();
-  assert.equal(estaConfigurada(), false);
+  assert.equal(configuracionPropia(), null, 'olvidarTodo si borra la configuracion propia');
+});
+
+// La app trae un proyecto puesto para que quien abre el enlace pueda crear su
+// cuenta sin pegar nada. Sin esto, el primer paso de una app social seria un
+// formulario de configuracion.
+test('sin configuracion propia se usa el proyecto por defecto', () => {
+  olvidarTodo();
+  const cfg = configuracion();
+  assert.equal(cfg.url, NUBE_POR_DEFECTO.url);
+  assert.equal(cfg.porDefecto, true, 'se distingue de una configurada a mano');
+  assert.equal(estaConfigurada(), true, 'la app arranca conectada');
+
+  configurar({ url: 'https://mio.supabase.co', anonKey: PUBLICA });
+  assert.equal(configuracion().url, 'https://mio.supabase.co', 'lo propio tiene preferencia');
+  assert.equal(configuracion().porDefecto, undefined);
+  olvidarTodo();
+  assert.equal(configuracion().url, NUBE_POR_DEFECTO.url, 'y al olvidarlo se vuelve al de serie');
+});
+
+// La clave que se publica tiene que ser publishable. Si algun dia alguien pega
+// la secreta en la constante, esta prueba lo para antes de que se despliegue.
+test('el proyecto por defecto nunca lleva una clave secreta', () => {
+  assert.equal(esClaveSecreta(NUBE_POR_DEFECTO.anonKey), null);
+  assert.match(NUBE_POR_DEFECTO.url, /^https:\/\/[a-z0-9-]+\.supabase\.co$/);
 });

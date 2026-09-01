@@ -301,6 +301,36 @@ revoke all on public.muro, public.virales from anon, authenticated;
 grant select on public.muro, public.virales to authenticated;
 
 -- -----------------------------------------------------------------------------
+-- 5bis. EL ESCAPARATE: quien ya esta dentro, visible SIN cuenta
+-- -----------------------------------------------------------------------------
+-- La portada ensena quien participa a quien todavia no se ha registrado, y en
+-- ese momento no hay sesion: una app social cuya puerta no ensena a nadie no
+-- invita a entrar.
+--
+-- POR QUE UNA FUNCION Y NO UN PERMISO SOBRE LA VISTA. ranking_global es
+-- security_invoker, asi que leerla exige permiso sobre public.perfiles: abrir
+-- la vista al rol anonimo obligaria a abrirle tambien la tabla entera, con
+-- todas sus columnas. Esta funcion devuelve CUATRO campos y ninguno mas, de
+-- perfiles que su duena marco como publicos. Es la diferencia entre abrir una
+-- ventana y quitar la pared.
+create or replace function public.vecindario(n integer default 8)
+returns table (nombre text, mote text, puntos integer, aura integer)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select p.nombre, p.mote, p.puntos, p.aura
+    from public.perfiles p
+   where p.publico = true
+   order by p.puntos desc, p.aura desc
+   limit least(greatest(coalesce(n, 8), 1), 20);
+$$;
+
+revoke all on function public.vecindario(integer) from public;
+grant execute on function public.vecindario(integer) to anon, authenticated;
+
+-- -----------------------------------------------------------------------------
 -- 6. ALMACEN DE VIDEOS Y FOTOS (Supabase Storage)
 -- -----------------------------------------------------------------------------
 -- Cubo publico de solo lectura: lo que se publica en el muro es, por decision

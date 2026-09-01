@@ -51,8 +51,6 @@ test('dos rutas seguidas nunca coinciden', () => {
 });
 
 test('la URL publica apunta al cubo correcto', () => {
-  olvidarTodo();
-  assert.equal(urlMedio('a/b.jpg'), null, 'sin configuracion no hay URL');
   configurar({ url: 'https://proyecto.supabase.co', anonKey: PUBLICA });
   assert.equal(urlMedio(`${PERFIL}/clip.webm`),
     `https://proyecto.supabase.co/storage/v1/object/public/${CUBO}/${PERFIL}/clip.webm`);

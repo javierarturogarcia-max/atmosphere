@@ -1,6 +1,6 @@
 # Poner la base de datos en marcha
 
-El esquema está escrito y **verificado contra un PostgreSQL real** (50
+El esquema está escrito y **verificado contra un PostgreSQL real** (53
 comprobaciones, ver `npm run test:db`). Lo único que falta es tu proyecto de
 Supabase, porque crear una cuenta a tu nombre no lo puede hacer nadie más.
 
@@ -161,15 +161,37 @@ admite los dos formatos.
 
 ---
 
-## 5 · Conectar la app (1 min)
+## 5 · Apuntar la app a tu proyecto (1 min)
 
-1. Abre Atmosphere → pestaña **☁️ Nube y grupos**.
-2. Pega la URL y la clave anon → **Conectar**.
-3. **Crear cuenta** con tu correo.
-4. **Sincronizar ahora**: sube tus registros locales y el servidor recalcula
-   los totales.
-5. Pestaña **🎬 Comunidad** → elige tu **mote** (3-15 caracteres, letras
-   minúsculas, números y guion bajo). Es único y no se puede repetir.
+La app **ya trae un proyecto puesto** (`src/core/nube.js`, constante
+`NUBE_POR_DEFECTO`), para que quien abra el enlace pueda registrarse sin pegar
+nada. Si el proyecto que acabas de crear es otro, tienes dos formas de
+apuntarla al tuyo:
+
+- **Para todo el mundo**: cambia las dos líneas de `NUBE_POR_DEFECTO` en
+  `src/core/nube.js`, ejecuta `npm run build` y publica.
+- **Solo en tu navegador**: pestaña **☁️ Nube y grupos** → *Cambiar de
+  proyecto* → pega la URL y la clave → **Conectar**. Tiene preferencia sobre
+  la del código.
+
+Después, cualquiera que abra la app:
+
+1. Ve la portada con **✨ Crear mi cuenta**.
+2. Escribe nombre, mote, país, correo y contraseña. El mote se propone solo a
+   partir del nombre; es único y de 3 a 15 caracteres.
+3. Entra directamente a registrar su primera acción.
+
+Quien no quiera cuenta pulsa **Explorar sin cuenta** y usa la app entera en
+local.
+
+### Si Supabase pide confirmar el correo
+
+Es el comportamiento por defecto y está bien para uso real, pero en clase
+retrasa la demostración. El alta lo maneja: reserva el mote y lo aplica solo en
+la primera entrada. Si prefieres quitarlo para el aula:
+
+**Authentication** → **Sign In / Providers** → *Email* → desactiva **Confirm
+email**.
 
 ---
 

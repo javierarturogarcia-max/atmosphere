@@ -248,6 +248,64 @@ export async function fijarMote(mote) {
   return v.mote;
 }
 
+/**
+ * Mote reservado durante un alta que quedo pendiente de confirmar el correo.
+ *
+ * Cuando el proyecto exige confirmacion, el alta no devuelve sesion y todavia
+ * no hay perfil al que ponerle el mote. Guardarlo aqui evita que la persona
+ * tenga que acordarse de volver a elegirlo tres dias despues, cuando por fin
+ * abra el correo.
+ */
+const CLAVE_MOTE_PENDIENTE = 'atmosphere.mote.pendiente.v1';
+
+/**
+ * Respaldo en memoria cuando no hay localStorage: navegacion privada, ajustes
+ * que bloquean el almacenamiento, o Node durante las pruebas. Sin esto, el
+ * mote reservado se perdia en silencio justo para quien mas cuesta recuperar.
+ */
+const almacen = (() => {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const sonda = '__atmosphere__';
+      localStorage.setItem(sonda, '1');
+      localStorage.removeItem(sonda);
+      return localStorage;
+    }
+  } catch { /* bloqueado: se usa el respaldo */ }
+  const mapa = new Map();
+  return {
+    getItem: (k) => (mapa.has(k) ? mapa.get(k) : null),
+    setItem: (k, v) => mapa.set(k, String(v)),
+    removeItem: (k) => mapa.delete(k),
+  };
+})();
+
+export function guardarMotePendiente(mote) {
+  try {
+    if (mote) almacen.setItem(CLAVE_MOTE_PENDIENTE, String(mote));
+    else almacen.removeItem(CLAVE_MOTE_PENDIENTE);
+  } catch { /* sin almacenamiento */ }
+}
+
+export function motePendiente() {
+  try { return almacen.getItem(CLAVE_MOTE_PENDIENTE) || null; } catch { return null; }
+}
+
+/**
+ * Quien ya esta dentro, para ensenarlo en la portada A QUIEN AUN NO TIENE
+ * CUENTA. Va contra la vista publica ranking_global y sin token, porque en ese
+ * momento no hay sesion: una portada de app social que no ensena a nadie no
+ * invita a entrar.
+ *
+ * Si el proyecto no le ha dado permiso de lectura al rol anonimo, esto falla y
+ * la portada lo asume sin romperse: es un adorno, no un requisito.
+ */
+export async function vecindario(limite = 8) {
+  return llamarAPI('/rest/v1/rpc/vecindario', {
+    metodo: 'POST', autenticado: false, cuerpo: { n: Math.min(20, Math.max(1, limite)) },
+  });
+}
+
 /** Ranking por aura: quien mas contagia el habito. */
 export async function rankingAura(limite = 30) {
   return llamarAPI(

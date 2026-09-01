@@ -14,10 +14,22 @@ export function vistaNube(ctx) {
     texto: 'Opcional y desactivada por defecto. La app funciona entera sin cuenta: esto solo anade lo que en local es imposible, comparar con personas reales y no perder el historial al cambiar de movil. Tus fotos, notas y coordenadas nunca se envian.' }));
   raiz.appendChild(cuerpo);
 
+  // "Cambiar de proyecto" no puede depender de que estaConfigurada() pase a
+  // false: desde que la app trae un proyecto de serie, eso no ocurre nunca y
+  // el formulario quedaba inalcanzable. Es una decision de la vista, no del
+  // estado de la nube.
+  let cambiando = false;
+
   const pintar = async () => {
     cuerpo.innerHTML = '';
-    if (!api.estaConfigurada()) { paso1Configurar(cuerpo, pintar); return; }
-    if (!api.haySesion()) { paso2Cuenta(cuerpo, pintar, ctx); return; }
+    if (cambiando || !api.estaConfigurada()) {
+      paso1Configurar(cuerpo, () => { cambiando = false; pintar(); });
+      return;
+    }
+    if (!api.haySesion()) {
+      paso2Cuenta(cuerpo, (o) => { if (o?.cambiar) cambiando = true; pintar(); }, ctx);
+      return;
+    }
     await paso3Panel(cuerpo, pintar, ctx);
   };
 
@@ -94,7 +106,8 @@ function paso2Cuenta(cuerpo, repintar, ctx) {
       ]),
     ]),
     el('div', { clase: 'divisor' }),
-    el('button', { clase: 'btn s', texto: 'Cambiar de proyecto', onclick: () => { api.olvidarTodo(); repintar(); } }),
+    el('button', { clase: 'btn s', texto: 'Cambiar de proyecto',
+      onclick: () => { api.olvidarTodo(); repintar({ cambiar: true }); } }),
   ]));
 }
 

@@ -419,6 +419,33 @@ que sostienen la capa social son políticas de PostgreSQL:
 El doble me gusta lo impide la clave primaria compuesta `(publicacion_id,
 perfil_id)`, no un `if`.
 
+### La puerta: por que la clave publica viaja en el codigo
+
+Durante un tiempo, crear una cuenta exigia pegar la URL del proyecto y su clave
+antes de poder registrarse. Eso funciona para quien construyo la aplicacion y
+para nadie mas: a la persona a la que le pasas el enlace le aparece un
+formulario de configuracion donde esperaba un boton de *crear cuenta*, y ahi se
+acaba la comunidad.
+
+La solucion es incomoda de leer la primera vez: **la clave publica del proyecto
+va escrita en el codigo fuente**. Conviene explicar por que no es una fuga.
+
+Supabase la llama *publishable* precisamente porque esta pensada para vivir en
+el navegador. En cualquier aplicacion que use Supabase —las suyas propias
+incluidas— basta abrir las herramientas de desarrollo para verla: no hay forma
+de esconder una clave que el navegador tiene que enviar en cada peticion. Lo
+que protege los datos no es esa clave, sino las politicas RLS, que es donde
+esta puesto todo el esfuerzo de este esquema. La clave secreta es otra cosa
+completamente distinta —salta todas las politicas— y por eso `esClaveSecreta()`
+la rechaza si alguien la pega por error.
+
+El coste real es otro y conviene decirlo: cualquiera que encuentre el
+repositorio puede crearse una cuenta en el proyecto. Para un trabajo de clase
+eso es lo que se busca. Para algo abierto al publico, la contencion no seria
+esconder la clave sino limitar el alta —confirmacion por correo, dominio
+restringido a un centro educativo, o un limite de altas por hora—, que es donde
+esas defensas funcionan de verdad.
+
 ### El permiso que se concede solo
 
 Hay un detalle de Supabase que convierte en falso todo lo anterior si no se

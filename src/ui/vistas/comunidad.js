@@ -22,10 +22,13 @@ export function vistaComunidad(ctx) {
     if (!api.haySesion()) {
       cuerpo.appendChild(el('div', { clase: 'tarjeta centrado' }, [
         el('div', { estilo: 'font-size:44px', texto: '🌍' }),
-        el('h2', { estilo: 'margin:11px 0 5px', texto: 'Conecta para entrar en la comunidad' }),
+        el('h2', { estilo: 'margin:11px 0 5px', texto: 'Únete para entrar en la comunidad' }),
         el('p', { clase: 'mini', estilo: 'margin-bottom:15px' },
-          ['El muro necesita cuenta: es lo unico de la app que no puede funcionar solo en tu dispositivo.']),
-        el('button', { clase: 'btn primario', texto: '☁️ Ir a Nube y grupos', onclick: () => ctx.ir('nube') }),
+          ['El muro necesita cuenta: es lo unico de la app que no puede funcionar solo en tu dispositivo. Se tarda menos de un minuto.']),
+        el('div', { clase: 'fila centrada envuelve' }, [
+          el('button', { clase: 'btn primario', texto: '✨ Crear mi cuenta', onclick: () => ctx.ir('bienvenida') }),
+          el('button', { clase: 'btn', texto: 'Ya tengo cuenta', onclick: () => ctx.ir('bienvenida') }),
+        ]),
       ]));
       return;
     }

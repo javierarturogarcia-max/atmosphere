@@ -46,6 +46,31 @@ export class ErrorNube extends Error {
 // ============================================================== configuracion
 
 /**
+ * Proyecto al que se conecta la app si nadie configura otro.
+ *
+ * SIN ESTO NO HAY RED SOCIAL. Pedirle a cada persona que pegue una URL y una
+ * clave antes de poder crear su cuenta convierte el primer paso en una tarea
+ * de programador: la companera a la que le pasas el enlace se encuentra un
+ * formulario de configuracion en vez de un "crear cuenta", y ahi se acaba.
+ * Con esto, quien abre el enlace ya esta conectado y solo elige su mote.
+ *
+ * LA CLAVE PUBLICA VA AQUI A PROPOSITO. Supabase la llama "publishable" justo
+ * porque esta pensada para vivir en el cliente: cualquiera que abra las
+ * herramientas del navegador la vera en cualquier aplicacion que use Supabase.
+ * Lo que protege los datos no es esconderla —seria imposible— sino las
+ * politicas RLS, que es donde esta puesto el esfuerzo de este proyecto. La
+ * clave SECRETA es otra cosa y nunca debe aparecer aqui; `esClaveSecreta()` la
+ * rechaza si alguien la pega por error.
+ *
+ * Para apuntar a otro proyecto: cambiar estas dos lineas, o pegar los datos en
+ * Perfil -> Nube, que tiene preferencia sobre este valor.
+ */
+export const NUBE_POR_DEFECTO = {
+  url: 'https://anrebwrrkubkkaaunyna.supabase.co',
+  anonKey: 'sb_publishable_mU-ALe_ht0qx84oWwvGEnQ_rBMzXRu0',
+};
+
+/**
  * Detecta una clave SECRETA pegada por error donde va la publica.
  *
  * Es el error mas grave posible en esta pantalla: la clave secreta salta TODAS
@@ -109,7 +134,21 @@ export function configurar({ url, anonKey }) {
   return { url: u, formato: esNueva ? 'publishable' : 'anon-jwt' };
 }
 
-export function configuracion() { return leerJSON(CLAVE_CONFIG, null); }
+/**
+ * Configuracion vigente: la que haya guardado la persona y, si no hay, la del
+ * proyecto por defecto. Nunca devuelve null salvo que se haya vaciado el
+ * proyecto por defecto en el codigo.
+ */
+export function configuracion() {
+  const propia = leerJSON(CLAVE_CONFIG, null);
+  if (propia?.url && propia?.anonKey) return propia;
+  const { url, anonKey } = NUBE_POR_DEFECTO;
+  return url && anonKey ? { url, anonKey, porDefecto: true } : null;
+}
+
+/** Solo la configurada a mano. La pantalla de ajustes necesita distinguirlas. */
+export function configuracionPropia() { return leerJSON(CLAVE_CONFIG, null); }
+
 export function estaConfigurada() { return !!configuracion(); }
 export function sesion() { return leerJSON(CLAVE_SESION, null); }
 export function haySesion() { const s = sesion(); return !!(s && s.access_token && s.perfilId); }
@@ -119,6 +158,10 @@ export function desconectar() {
   almacen.removeItem(CLAVE_SUBIDOS);
 }
 
+/**
+ * Borra la sesion y la configuracion propia. Si hay proyecto por defecto, la
+ * app vuelve a el en vez de quedarse sin nube.
+ */
 export function olvidarTodo() {
   desconectar();
   almacen.removeItem(CLAVE_CONFIG);
