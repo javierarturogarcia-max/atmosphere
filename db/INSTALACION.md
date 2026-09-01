@@ -41,7 +41,7 @@ not exists`, `drop policy if exists`).
 ### Comprobar que quedó bien instalado
 
 Pega también [`db/verificar.sql`](verificar.sql) en una consulta nueva y pulsa
-**Run**. Devuelve una tabla de 18 filas:
+**Run**. Devuelve una tabla de 19 filas:
 
 | bloque | comprobacion | estado |
 |---|---|---|
@@ -131,8 +131,10 @@ devuelve `{<uuid>}`, así que compararlo con `auth.uid()` impide escribir en la
 carpeta de otra persona. Sin ella, cualquiera podría subir archivos al nombre
 de quien quisiera.
 
-**Cómo saber si faltan:** la app te lo dice. Al publicar, si falta el cubo el
-mensaje nombra *New bucket*; si faltan las políticas, nombra *Policies*.
+**Cómo saber si faltan:** `db/verificar.sql` las comprueba — la fila *«El
+almacén tiene sus políticas de acceso»* las lista por nombre y avisa si hay
+menos de tres. Y si aun así se te pasa, la app te lo dice al publicar: si falta
+el cubo el mensaje nombra *New bucket*; si faltan las políticas, *Policies*.
 
 El plan gratuito incluye **1 GB** de almacenamiento: entre 300 y 900 vídeos
 cortos. Suficiente para un aula durante un curso.

@@ -189,6 +189,23 @@ with comprobaciones as (
     from pg_policies
    where schemaname = 'public' and tablename = 'publicaciones' and cmd = 'UPDATE'
 
+  -- Las politicas del almacen se ponen a menudo A MANO, porque social.sql no
+  -- puede crearlas cuando storage.objects pertenece a supabase_storage_admin.
+  -- Comprobar solo que el cubo existe dejaba fuera justo la parte manual: se
+  -- podia tener todo en OK y fallar al subir el primer video.
+  union all
+  select 17.5, 'Social',
+         'El almacen tiene sus politicas de acceso',
+         count(*) >= 3,
+         case when count(*) = 0
+              then 'FALTAN las 3: ponlas en Storage -> Policies (estan en db/INSTALACION.md)'
+              when count(*) < 3
+              then 'solo ' || count(*) || ' de 3: ' || string_agg(policyname, ', ')
+              else string_agg(policyname, ', ' order by policyname) end
+    from pg_policies
+   where schemaname = 'storage' and tablename = 'objects'
+     and coalesce(qual, '') || coalesce(with_check, '') like '%evidencias%'
+
   union all
   select 17, 'Social',
          'El cubo de medios existe y es publico',
