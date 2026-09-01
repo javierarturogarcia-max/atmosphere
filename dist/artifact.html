@@ -7674,17 +7674,95 @@ async function llamar(ruta, { metodo = 'GET', cuerpo = null, autenticado = true,
 
 // ==================================================================== cuenta
 
+/**
+ * A donde debe volver el enlace del correo de confirmacion.
+ *
+ * Sin esto, GoTrue usa el "Site URL" del proyecto, que en uno recien creado es
+ * http://localhost:3000: quien confirma desde el movil aterriza en el
+ * localhost de SU propio telefono y ve ERR_CONNECTION_REFUSED. Mandando la
+ * direccion real de esta pagina, el enlace vuelve a donde se pidio el alta,
+ * sea github.io, un dominio propio o el servidor de desarrollo.
+ *
+ * Supabase solo respeta esta direccion si esta en la lista de "Redirect URLs"
+ * del proyecto; si no lo esta, cae al Site URL. Por eso el arreglo completo
+ * necesita las dos cosas, y db/INSTALACION.md lo explica.
+ */
+function direccionDeVuelta() {
+  if (typeof location === 'undefined' || !location.protocol.startsWith('http')) return null;
+  return `${location.origin}${location.pathname}`;
+}
+
 async function crearCuenta(email, contrasena, { nombre = 'Guardian', pais = 'WW' } = {}) {
-  const datos = await llamar('/auth/v1/signup', {
-    metodo: 'POST', autenticado: false,
-    cuerpo: { email, password: contrasena, data: { nombre, pais } },
-  });
+  const vuelta = direccionDeVuelta();
+  const datos = await llamar(
+    `/auth/v1/signup${vuelta ? `?redirect_to=${encodeURIComponent(vuelta)}` : ''}`, {
+      metodo: 'POST', autenticado: false,
+      cuerpo: { email, password: contrasena, data: { nombre, pais } },
+    });
   // Con confirmacion por correo activada, todavia no hay token.
   if (datos?.access_token) {
     guardarJSON(CLAVE_SESION, { access_token: datos.access_token, refresh_token: datos.refresh_token, perfilId: datos.user?.id, email });
     return { ok: true, confirmacionPendiente: false };
   }
   return { ok: true, confirmacionPendiente: true };
+}
+
+/** El id del usuario va en el campo "sub" del JWT; se lee sin pedir nada. */
+function sujetoDeJWT(token) {
+  try {
+    const carga = JSON.parse(atob(String(token).split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return carga?.sub || null;
+  } catch { return null; }
+}
+
+/**
+ * Recoge la sesion que GoTrue deja en la URL al volver del correo.
+ *
+ * Al confirmar, Supabase redirige a la app con los tokens en el fragmento:
+ *   #access_token=...&refresh_token=...&type=signup
+ * Sin esto, la persona aterriza en la app SIN sesion despues de haber
+ * confirmado, y tiene que escribir usuario y contrasena otra vez sin entender
+ * por que. Tambien recoge el caso de error (enlace caducado o ya usado), que
+ * llega igual por el fragmento.
+ *
+ * Limpia la URL despues, porque el fragmento es ademas el enrutador de la app
+ * y un token ahi la mandaria a una ruta inexistente — y quedaria en el
+ * historial del navegador.
+ *
+ * @returns {{estado:'sesion'|'error'|'nada', tipo?:string, mensaje?:string}}
+ */
+function recogerSesionDeURL(loc = typeof location !== 'undefined' ? location : null) {
+  if (!loc) return { estado: 'nada' };
+  const bruto = String(loc.hash || '').replace(/^#/, '');
+  if (!bruto.includes('=')) return { estado: 'nada' };
+  const p = new URLSearchParams(bruto);
+
+  const limpiar = () => {
+    try {
+      history.replaceState(null, '', `${loc.pathname}${loc.search}`);
+    } catch { /* sin history: se queda la URL sucia, pero la sesion ya esta */ }
+  };
+
+  if (p.get('error') || p.get('error_description')) {
+    const desc = p.get('error_description') || p.get('error') || '';
+    limpiar();
+    return {
+      estado: 'error',
+      mensaje: /expired|invalid/i.test(desc)
+        ? 'Ese enlace de confirmacion ya caduco o se uso. Vuelve a entrar con tu correo y contrasena.'
+        : desc.replace(/\+/g, ' '),
+    };
+  }
+
+  const access = p.get('access_token');
+  const refresh = p.get('refresh_token');
+  if (!access) return { estado: 'nada' };
+
+  const perfilId = sujetoDeJWT(access);
+  if (!perfilId) return { estado: 'nada' };
+  guardarJSON(CLAVE_SESION, { access_token: access, refresh_token: refresh, perfilId, email: null });
+  limpiar();
+  return { estado: 'sesion', tipo: p.get('type') || 'signup' };
 }
 
 async function entrar(email, contrasena) {
@@ -7878,7 +7956,10 @@ function situarEnRanking(filas, miId) {
   __exp.desconectar = desconectar;
   __exp.olvidarTodo = olvidarTodo;
   __exp.llamarAPI = llamarAPI;
+  __exp.direccionDeVuelta = direccionDeVuelta;
   __exp.crearCuenta = crearCuenta;
+  __exp.sujetoDeJWT = sujetoDeJWT;
+  __exp.recogerSesionDeURL = recogerSesionDeURL;
   __exp.entrar = entrar;
   __exp.pendientesDeSubir = pendientesDeSubir;
   __exp.aFilaRegistro = aFilaRegistro;
@@ -9831,6 +9912,8 @@ const { vistaComunidad } = __req("src/ui/vistas/comunidad.js");
 const { vistaCiencia } = __req("src/ui/vistas/ciencia.js");
 const { vistaPerfil } = __req("src/ui/vistas/perfil.js");
 const { vistaBienvenida, tocaBienvenida, marcarVisto } = __req("src/ui/vistas/bienvenida.js");
+const { recogerSesionDeURL } = __req("src/core/nube.js");
+const { motePendiente, guardarMotePendiente, fijarMote } = __req("src/core/social.js");
 
 const RUTAS = [
   { id: 'bienvenida', etiqueta: 'Bienvenida', icono: '👋', vista: vistaBienvenida, oculta: true },
@@ -9852,6 +9935,13 @@ const RUTAS = [
 ];
 
 function iniciar(raiz) {
+  // Lo PRIMERO, antes de mirar la ruta: si venimos del enlace de confirmacion
+  // del correo, GoTrue deja los tokens en el fragmento, que es tambien el
+  // enrutador de esta app. Recogerlos aqui evita dos cosas: aterrizar sin
+  // sesion despues de haber confirmado, y que un "#access_token=..." se
+  // interprete como una ruta.
+  const vueltaDelCorreo = recogerSesionDeURL();
+
   const guardado = cargar();
   const almacen = crearAlmacen(guardado || estadoInicial());
   let rutaActual = (location.hash || '').slice(1);
@@ -9941,6 +10031,8 @@ function iniciar(raiz) {
   }
 
   window.addEventListener('hashchange', () => {
+    const vuelta = recogerSesionDeURL();
+    if (vuelta.estado !== 'nada') { anunciarVuelta(vuelta, ctx); return; }
     const nueva = location.hash.slice(1);
     if (nueva && nueva !== rutaActual && RUTAS.some((r) => r.id === nueva)) {
       rutaActual = nueva;
@@ -9957,7 +10049,39 @@ function iniciar(raiz) {
   // encima de la portada dejaba sus botones sin poder pulsarse.
   if (!guardado && rutaActual !== 'bienvenida') setTimeout(() => ajusteLocal(ctx), 350);
 
+  anunciarVuelta(vueltaDelCorreo, ctx);
+
   return ctx;
+}
+
+/**
+ * Cierra el circulo del correo de confirmacion: avisa de como fue y aplica el
+ * mote que quedo reservado en el alta, para que nadie tenga que volver a
+ * elegirlo tres dias despues de haberlo escrito.
+ */
+function anunciarVuelta(vuelta, ctx) {
+  if (!vuelta || vuelta.estado === 'nada') return;
+
+  if (vuelta.estado === 'error') {
+    toast({ titulo: 'El enlace no valia', texto: vuelta.mensaje, tipo: 'alerta', icono: '⚠️', duracion: 9000 });
+    ctx.ir('bienvenida');
+    return;
+  }
+
+  const pendiente = motePendiente();
+  const saludar = (mote) => {
+    toast({
+      titulo: mote ? `¡Correo confirmado, @${mote}!` : 'Correo confirmado',
+      texto: 'Ya estas dentro. Registra tu primera accion.',
+      icono: '🎉', duracion: 7000,
+    });
+    ctx.ir('registrar');
+  };
+
+  if (!pendiente) { saludar(null); return; }
+  fijarMote(pendiente)
+    .then(() => { guardarMotePendiente(null); saludar(pendiente); })
+    .catch(() => { guardarMotePendiente(null); saludar(null); });
 }
 
 /**

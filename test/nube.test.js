@@ -4,6 +4,7 @@ import {
   configurar, configuracion, estaConfigurada, desconectar, olvidarTodo,
   pendientesDeSubir, aFilaRegistro, enLotes, situarEnRanking, generarCodigo,
   esClaveSecreta, ErrorNube, configuracionPropia, NUBE_POR_DEFECTO,
+  recogerSesionDeURL, direccionDeVuelta, haySesion, sesion,
 } from '../src/core/nube.js';
 import { generador } from '../src/core/rng.js';
 
@@ -200,4 +201,46 @@ test('sin configuracion propia se usa el proyecto por defecto', () => {
 test('el proyecto por defecto nunca lleva una clave secreta', () => {
   assert.equal(esClaveSecreta(NUBE_POR_DEFECTO.anonKey), null);
   assert.match(NUBE_POR_DEFECTO.url, /^https:\/\/[a-z0-9-]+\.supabase\.co$/);
+});
+
+// El enlace del correo de confirmacion vuelve con los tokens en el fragmento.
+// Sin recogerlos, la persona aterriza SIN sesion despues de haber confirmado.
+const falsoJWT = (sub) => `x.${b64({ sub, role: 'authenticated' })}.y`;
+const falsaLoc = (hash) => ({ hash, pathname: '/atmosphere/', search: '' });
+
+test('recoge la sesion que GoTrue deja en el fragmento', () => {
+  olvidarTodo();
+  const r = recogerSesionDeURL(falsaLoc(
+    `#access_token=${falsoJWT('11111111-1111-1111-1111-111111111111')}`
+    + '&refresh_token=rrr&type=signup&expires_in=3600'));
+  assert.equal(r.estado, 'sesion');
+  assert.equal(r.tipo, 'signup');
+  assert.equal(haySesion(), true, 'queda dentro sin volver a escribir la contrasena');
+  assert.equal(sesion().perfilId, '11111111-1111-1111-1111-111111111111',
+    'el id sale del campo sub del JWT, sin pedir nada al servidor');
+  desconectar();
+});
+
+test('un enlace caducado se explica en vez de dejar la app muda', () => {
+  const r = recogerSesionDeURL(falsaLoc(
+    '#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired'));
+  assert.equal(r.estado, 'error');
+  assert.match(r.mensaje, /caduco|caducó/);
+  assert.equal(haySesion(), false);
+});
+
+test('una ruta normal no se confunde con una vuelta del correo', () => {
+  // El fragmento es tambien el enrutador de la app: '#comunidad' no lleva
+  // tokens y no debe tocarse.
+  for (const h of ['#panel', '#comunidad', '', '#']) {
+    assert.equal(recogerSesionDeURL(falsaLoc(h)).estado, 'nada', h);
+  }
+  // Y un fragmento con forma de parametros pero sin token tampoco entra.
+  assert.equal(recogerSesionDeURL(falsaLoc('#type=signup&expires_in=3600')).estado, 'nada');
+});
+
+test('el alta pide volver a esta pagina, no al localhost del proyecto', () => {
+  // Es la causa exacta del ERR_CONNECTION_REFUSED al confirmar desde el movil:
+  // el Site URL por defecto de Supabase es http://localhost:3000.
+  assert.equal(direccionDeVuelta(), null, 'sin location http no se inventa una');
 });

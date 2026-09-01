@@ -18,6 +18,8 @@ import { vistaComunidad } from './vistas/comunidad.js';
 import { vistaCiencia } from './vistas/ciencia.js';
 import { vistaPerfil } from './vistas/perfil.js';
 import { vistaBienvenida, tocaBienvenida, marcarVisto } from './vistas/bienvenida.js';
+import { recogerSesionDeURL } from '../core/nube.js';
+import { motePendiente, guardarMotePendiente, fijarMote } from '../core/social.js';
 
 const RUTAS = [
   { id: 'bienvenida', etiqueta: 'Bienvenida', icono: '👋', vista: vistaBienvenida, oculta: true },
@@ -39,6 +41,13 @@ const RUTAS = [
 ];
 
 export function iniciar(raiz) {
+  // Lo PRIMERO, antes de mirar la ruta: si venimos del enlace de confirmacion
+  // del correo, GoTrue deja los tokens en el fragmento, que es tambien el
+  // enrutador de esta app. Recogerlos aqui evita dos cosas: aterrizar sin
+  // sesion despues de haber confirmado, y que un "#access_token=..." se
+  // interprete como una ruta.
+  const vueltaDelCorreo = recogerSesionDeURL();
+
   const guardado = cargar();
   const almacen = crearAlmacen(guardado || estadoInicial());
   let rutaActual = (location.hash || '').slice(1);
@@ -128,6 +137,8 @@ export function iniciar(raiz) {
   }
 
   window.addEventListener('hashchange', () => {
+    const vuelta = recogerSesionDeURL();
+    if (vuelta.estado !== 'nada') { anunciarVuelta(vuelta, ctx); return; }
     const nueva = location.hash.slice(1);
     if (nueva && nueva !== rutaActual && RUTAS.some((r) => r.id === nueva)) {
       rutaActual = nueva;
@@ -144,7 +155,39 @@ export function iniciar(raiz) {
   // encima de la portada dejaba sus botones sin poder pulsarse.
   if (!guardado && rutaActual !== 'bienvenida') setTimeout(() => ajusteLocal(ctx), 350);
 
+  anunciarVuelta(vueltaDelCorreo, ctx);
+
   return ctx;
+}
+
+/**
+ * Cierra el circulo del correo de confirmacion: avisa de como fue y aplica el
+ * mote que quedo reservado en el alta, para que nadie tenga que volver a
+ * elegirlo tres dias despues de haberlo escrito.
+ */
+function anunciarVuelta(vuelta, ctx) {
+  if (!vuelta || vuelta.estado === 'nada') return;
+
+  if (vuelta.estado === 'error') {
+    toast({ titulo: 'El enlace no valia', texto: vuelta.mensaje, tipo: 'alerta', icono: '⚠️', duracion: 9000 });
+    ctx.ir('bienvenida');
+    return;
+  }
+
+  const pendiente = motePendiente();
+  const saludar = (mote) => {
+    toast({
+      titulo: mote ? `¡Correo confirmado, @${mote}!` : 'Correo confirmado',
+      texto: 'Ya estas dentro. Registra tu primera accion.',
+      icono: '🎉', duracion: 7000,
+    });
+    ctx.ir('registrar');
+  };
+
+  if (!pendiente) { saludar(null); return; }
+  fijarMote(pendiente)
+    .then(() => { guardarMotePendiente(null); saludar(pendiente); })
+    .catch(() => { guardarMotePendiente(null); saludar(null); });
 }
 
 /**

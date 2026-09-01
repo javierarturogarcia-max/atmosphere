@@ -224,17 +224,95 @@ async function llamar(ruta, { metodo = 'GET', cuerpo = null, autenticado = true,
 
 // ==================================================================== cuenta
 
+/**
+ * A donde debe volver el enlace del correo de confirmacion.
+ *
+ * Sin esto, GoTrue usa el "Site URL" del proyecto, que en uno recien creado es
+ * http://localhost:3000: quien confirma desde el movil aterriza en el
+ * localhost de SU propio telefono y ve ERR_CONNECTION_REFUSED. Mandando la
+ * direccion real de esta pagina, el enlace vuelve a donde se pidio el alta,
+ * sea github.io, un dominio propio o el servidor de desarrollo.
+ *
+ * Supabase solo respeta esta direccion si esta en la lista de "Redirect URLs"
+ * del proyecto; si no lo esta, cae al Site URL. Por eso el arreglo completo
+ * necesita las dos cosas, y db/INSTALACION.md lo explica.
+ */
+export function direccionDeVuelta() {
+  if (typeof location === 'undefined' || !location.protocol.startsWith('http')) return null;
+  return `${location.origin}${location.pathname}`;
+}
+
 export async function crearCuenta(email, contrasena, { nombre = 'Guardian', pais = 'WW' } = {}) {
-  const datos = await llamar('/auth/v1/signup', {
-    metodo: 'POST', autenticado: false,
-    cuerpo: { email, password: contrasena, data: { nombre, pais } },
-  });
+  const vuelta = direccionDeVuelta();
+  const datos = await llamar(
+    `/auth/v1/signup${vuelta ? `?redirect_to=${encodeURIComponent(vuelta)}` : ''}`, {
+      metodo: 'POST', autenticado: false,
+      cuerpo: { email, password: contrasena, data: { nombre, pais } },
+    });
   // Con confirmacion por correo activada, todavia no hay token.
   if (datos?.access_token) {
     guardarJSON(CLAVE_SESION, { access_token: datos.access_token, refresh_token: datos.refresh_token, perfilId: datos.user?.id, email });
     return { ok: true, confirmacionPendiente: false };
   }
   return { ok: true, confirmacionPendiente: true };
+}
+
+/** El id del usuario va en el campo "sub" del JWT; se lee sin pedir nada. */
+export function sujetoDeJWT(token) {
+  try {
+    const carga = JSON.parse(atob(String(token).split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return carga?.sub || null;
+  } catch { return null; }
+}
+
+/**
+ * Recoge la sesion que GoTrue deja en la URL al volver del correo.
+ *
+ * Al confirmar, Supabase redirige a la app con los tokens en el fragmento:
+ *   #access_token=...&refresh_token=...&type=signup
+ * Sin esto, la persona aterriza en la app SIN sesion despues de haber
+ * confirmado, y tiene que escribir usuario y contrasena otra vez sin entender
+ * por que. Tambien recoge el caso de error (enlace caducado o ya usado), que
+ * llega igual por el fragmento.
+ *
+ * Limpia la URL despues, porque el fragmento es ademas el enrutador de la app
+ * y un token ahi la mandaria a una ruta inexistente — y quedaria en el
+ * historial del navegador.
+ *
+ * @returns {{estado:'sesion'|'error'|'nada', tipo?:string, mensaje?:string}}
+ */
+export function recogerSesionDeURL(loc = typeof location !== 'undefined' ? location : null) {
+  if (!loc) return { estado: 'nada' };
+  const bruto = String(loc.hash || '').replace(/^#/, '');
+  if (!bruto.includes('=')) return { estado: 'nada' };
+  const p = new URLSearchParams(bruto);
+
+  const limpiar = () => {
+    try {
+      history.replaceState(null, '', `${loc.pathname}${loc.search}`);
+    } catch { /* sin history: se queda la URL sucia, pero la sesion ya esta */ }
+  };
+
+  if (p.get('error') || p.get('error_description')) {
+    const desc = p.get('error_description') || p.get('error') || '';
+    limpiar();
+    return {
+      estado: 'error',
+      mensaje: /expired|invalid/i.test(desc)
+        ? 'Ese enlace de confirmacion ya caduco o se uso. Vuelve a entrar con tu correo y contrasena.'
+        : desc.replace(/\+/g, ' '),
+    };
+  }
+
+  const access = p.get('access_token');
+  const refresh = p.get('refresh_token');
+  if (!access) return { estado: 'nada' };
+
+  const perfilId = sujetoDeJWT(access);
+  if (!perfilId) return { estado: 'nada' };
+  guardarJSON(CLAVE_SESION, { access_token: access, refresh_token: refresh, perfilId, email: null });
+  limpiar();
+  return { estado: 'sesion', tipo: p.get('type') || 'signup' };
 }
 
 export async function entrar(email, contrasena) {

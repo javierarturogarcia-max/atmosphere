@@ -184,14 +184,40 @@ Después, cualquiera que abra la app:
 Quien no quiera cuenta pulsa **Explorar sin cuenta** y usa la app entera en
 local.
 
-### Si Supabase pide confirmar el correo
+### ⚠️ Las URL de retorno (esto hay que tocarlo sí o sí)
+
+Un proyecto nuevo de Supabase trae **`http://localhost:3000`** como *Site URL*.
+Es la dirección a la que vuelve el enlace de confirmación del correo, así que
+quien confirma desde el móvil aterriza en el *localhost de su propio teléfono*
+y ve **ERR_CONNECTION_REFUSED**. La cuenta sí queda confirmada —Supabase valida
+el token antes de redirigir— pero la persona cree que algo se rompió.
+
+**Authentication** → **URL Configuration**:
+
+| Campo | Valor |
+|---|---|
+| **Site URL** | `https://javierarturogarcia-max.github.io/atmosphere/` |
+| **Redirect URLs** | añade esa misma, y `http://localhost:4173/**` si usas `npm run dev` |
+
+La app además pide explícitamente volver a la página desde la que se registró
+(`redirect_to`), lo que hace que funcione igual en GitHub Pages, en un dominio
+propio o en local — **pero Supabase solo respeta esa petición si la dirección
+está en Redirect URLs**. Si no está, cae al Site URL. Por eso hacen falta las
+dos casillas.
+
+Con esto puesto, el enlace del correo devuelve a la app **ya con la sesión
+iniciada**: no hay que volver a escribir la contraseña, y el mote elegido en el
+alta se aplica solo.
+
+### Si prefieres quitar la confirmación por correo
 
 Es el comportamiento por defecto y está bien para uso real, pero en clase
-retrasa la demostración. El alta lo maneja: reserva el mote y lo aplica solo en
-la primera entrada. Si prefieres quitarlo para el aula:
+retrasa la demostración:
 
 **Authentication** → **Sign In / Providers** → *Email* → desactiva **Confirm
 email**.
+
+Con eso, el alta entra directa y el mote se pone en el mismo paso.
 
 ---
 
