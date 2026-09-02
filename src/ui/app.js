@@ -18,6 +18,7 @@ import { vistaComunidad } from './vistas/comunidad.js';
 import { vistaCiencia } from './vistas/ciencia.js';
 import { vistaPerfil } from './vistas/perfil.js';
 import { vistaBienvenida, tocaBienvenida, marcarVisto } from './vistas/bienvenida.js';
+import { vistaEspacio } from './vistas/espacio.js';
 import { recogerSesionDeURL, haySesion, miPerfil } from '../core/nube.js';
 import { motePendiente, guardarMotePendiente, fijarMote } from '../core/social.js';
 
@@ -34,6 +35,7 @@ const RUTAS = [
   { id: 'aire',      etiqueta: 'Aire',       icono: '💨', vista: vistaAire },
   { id: 'ranking',   etiqueta: 'Ranking',    icono: '🏆', vista: vistaRanking },
   { id: 'comunidad', etiqueta: 'Comunidad',  icono: '🎬', vista: vistaComunidad },
+  { id: 'espacio',   etiqueta: 'Mi espacio', icono: '🪪', vista: vistaEspacio },
   { id: 'nube',      etiqueta: 'Nube y grupos', icono: '☁️', vista: vistaNube },
   { separador: true },
   { id: 'ciencia',   etiqueta: 'Ciencia',    icono: '🔬', vista: vistaCiencia },
@@ -50,8 +52,14 @@ export function iniciar(raiz) {
 
   const guardado = cargar();
   const almacen = crearAlmacen(guardado || estadoInicial());
-  let rutaActual = (location.hash || '').slice(1);
-  if (!RUTAS.some((r) => r.id === rutaActual)) rutaActual = '';
+  const partir = (h) => {
+    const bruto = String(h || '').replace(/^#/, '');
+    const i = bruto.indexOf('/');
+    return i < 0 ? [bruto, null] : [bruto.slice(0, i), decodeURIComponent(bruto.slice(i + 1))];
+  };
+
+  let [rutaActual, argRuta] = partir(location.hash);
+  if (!RUTAS.some((r) => r.id === rutaActual)) { rutaActual = ''; argRuta = null; }
 
   // Primera visita sin cuenta: se entra por la portada, no por el panel. Es la
   // diferencia entre una herramienta y una comunidad — y sin ella, crear una
@@ -67,9 +75,10 @@ export function iniciar(raiz) {
 
   const ctx = {
     almacen,
-    ir(ruta) {
+    ir(ruta, arg = null) {
       rutaActual = ruta;
-      location.hash = `#${ruta}`;
+      argRuta = arg;
+      location.hash = arg ? `#${ruta}/${encodeURIComponent(arg)}` : `#${ruta}`;
       pintar();
       contenido.scrollIntoView({ block: 'start', behavior: 'instant' });
       window.scrollTo(0, 0);
@@ -128,7 +137,7 @@ export function iniciar(raiz) {
     const ruta = RUTAS.find((r) => r.id === rutaActual) || RUTAS.find((r) => r.id === 'panel');
     contenido.innerHTML = '';
     try {
-      contenido.appendChild(ruta.vista(ctx));
+      contenido.appendChild(ruta.vista(ctx, argRuta));
     } catch (e) {
       console.error(e);
       contenido.appendChild(el('div', { clase: 'aviso error' },
@@ -139,9 +148,10 @@ export function iniciar(raiz) {
   window.addEventListener('hashchange', () => {
     const vuelta = recogerSesionDeURL();
     if (vuelta.estado !== 'nada') { anunciarVuelta(vuelta, ctx); return; }
-    const nueva = location.hash.slice(1);
-    if (nueva && nueva !== rutaActual && RUTAS.some((r) => r.id === nueva)) {
+    const [nueva, arg] = partir(location.hash);
+    if (nueva && RUTAS.some((r) => r.id === nueva) && (nueva !== rutaActual || arg !== argRuta)) {
       rutaActual = nueva;
+      argRuta = arg;
       pintar();
     }
   });

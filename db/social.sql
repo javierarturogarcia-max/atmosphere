@@ -27,6 +27,22 @@ alter table public.perfiles
 comment on column public.perfiles.avatar is
   'Ruta en el cubo evidencias, siempre bajo la carpeta del propio perfil.';
 
+-- El medio deja de ser obligatorio. Antes solo se podia publicar una accion
+-- con foto o video, y eso dejaba fuera casi todo lo que se registra: beber agua
+-- del grifo, ir en bus, apagar el aire. El espacio de cada persona salia medio
+-- vacio no por falta de acciones sino por falta de camara.
+do $$
+begin
+  if to_regclass('public.publicaciones') is not null then
+    alter table public.publicaciones alter column ruta_medio drop not null;
+    alter table public.publicaciones alter column tipo_medio drop not null;
+    alter table public.publicaciones drop constraint if exists publicaciones_tipo_medio_check;
+    alter table public.publicaciones
+      add constraint publicaciones_tipo_medio_check
+      check (tipo_medio is null or tipo_medio in ('foto','video'));
+  end if;
+end $$;
+
 -- El mote es el apodo publico: corto, minusculas, sin espacios y unico.
 alter table public.perfiles
   drop constraint if exists perfiles_mote_formato;
@@ -54,8 +70,8 @@ create table if not exists public.publicaciones (
   accion_id     text not null,
   categoria     text not null,
   descripcion   text not null default '' check (char_length(descripcion) <= 200),
-  ruta_medio    text not null,
-  tipo_medio    text not null check (tipo_medio in ('foto','video')),
+  ruta_medio    text,
+  tipo_medio    text check (tipo_medio is null or tipo_medio in ('foto','video')),
   nivel_evidencia text,
   co2e          numeric(12,4) not null default 0,
   puntos        integer not null default 0,
@@ -201,8 +217,9 @@ declare
   v_aura integer;
 begin
   select coalesce(sum(
-           8 + 2 * likes_n
-           + case when nivel_evidencia in ('fechada','situada','video') then 5 else 0 end
+           case when ruta_medio is null then 3 else 8 end
+           + 2 * likes_n
+           + case when nivel_evidencia in ('fechada','situada','video','envivo') then 5 else 0 end
          ), 0)
     into v_aura
     from public.publicaciones

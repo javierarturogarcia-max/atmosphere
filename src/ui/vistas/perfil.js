@@ -37,6 +37,7 @@ export function vistaPerfil(ctx) {
         el('label', { clase: 'campo' }, ['Nombre', nombre]),
         el('label', { clase: 'campo' }, ['Pais (determina el mix electrico de tus calculos)', selPais]),
         el('label', { clase: 'campo' }, ['Tema visual', selTema]),
+        interruptorCompartir(ctx),
         el('button', {
           clase: 'btn primario', texto: 'Guardar cambios',
           onclick: () => {
@@ -300,4 +301,40 @@ function seccionFoto(ctx) {
     }).catch(() => {});
   }
   return caja;
+}
+
+
+/**
+ * Interruptor de compartir automatico.
+ *
+ * APAGADO POR DEFECTO, y esto no es negociable en una app que promete que los
+ * registros son privados. Encenderlo es una decision consciente y reversible:
+ * lo que se compartio antes sigue compartido, pero se puede borrar
+ * publicacion por publicacion desde el espacio.
+ */
+function interruptorCompartir(ctx) {
+  const estado = ctx.almacen.get();
+  const casilla = el('input', { type: 'checkbox' });
+  casilla.checked = !!estado.perfil.compartirAuto;
+  casilla.addEventListener('change', () => {
+    ctx.almacen.actualizarPerfil({ compartirAuto: casilla.checked });
+    toast(casilla.checked
+      ? { titulo: 'Compartir activado', icono: '🪪',
+          texto: 'Cada accion que registres aparecera en tu espacio.' }
+      : { titulo: 'Compartir desactivado', icono: '🔒',
+          texto: 'Lo ya publicado sigue ahi; puedes borrarlo desde tu espacio.' });
+  });
+
+  return el('div', { clase: 'campo' }, [
+    el('label', { clase: 'fila', estilo: 'gap:9px;cursor:pointer;align-items:flex-start' }, [
+      casilla,
+      el('div', {}, [
+        el('div', { estilo: 'font-weight:600;color:var(--texto)',
+          texto: 'Compartir mis acciones en mi espacio' }),
+        el('div', { clase: 'mini', estilo: 'margin-top:2px' },
+          ['Cada accion que registres se publica sola y otras personas pueden verla y reaccionar. '
+           + 'Sin esto, tus registros siguen siendo privados y solo se publica lo que elijas a mano.']),
+      ]),
+    ]),
+  ]);
 }

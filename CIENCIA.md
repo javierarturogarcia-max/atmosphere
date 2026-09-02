@@ -582,6 +582,37 @@ las tablas de Supabase *existían*, pero no los privilegios por defecto ni de
 quién eran. Un simulacro que se parece al original en lo que miras y no en lo
 que olvidas mirar da luz verde a los fallos que más importan.
 
+### El espacio personal y el compartir automático
+
+La petición natural —*«que se guarden todas mis acciones y otros puedan
+verlas»*— choca de frente con una promesa que este proyecto lleva escrita desde
+el principio: **los registros son privados y publicar es una decisión por
+acción**. Resolverlo cambiando el comportamiento por defecto habría sido
+traicionar esa promesa para todos los demás.
+
+La solución es un interruptor, **apagado de fábrica**, en Perfil. Quien lo
+enciende publica automáticamente cada acción que registre; quien no lo toca
+sigue exactamente como antes. Y apagarlo no borra lo ya compartido —eso sería
+sorprender en la otra dirección— pero cada publicación se puede borrar una a
+una.
+
+Para que eso funcione hubo que quitar un requisito que parecía inofensivo: la
+publicación **exigía foto o vídeo**. Casi todo lo que se registra no tiene
+cámara detrás —beber agua del grifo, ir en bus, apagar el aire—, así que el
+espacio de cada persona salía medio vacío no por falta de acciones sino por
+falta de cámara.
+
+Eso obligó a retocar el aura. Si una línea de texto valiera lo mismo que un
+vídeo, activar el compartir automático llenaría el aura de registros y dejaría
+de medir lo que dice medir. Ahora publicar sin medio vale **3** y con medio
+**8**, más el `+5` de evidencia verificada. La escala sigue apuntando a lo
+mismo: contagiar el hábito, no acumular filas.
+
+De paso salió un error de esa lista: `envivo` —el nivel más fuerte, el vídeo
+grabado dentro de la app— no estaba entre los que suman el `+5`. Se quedó fuera
+al añadirlo, así que la prueba más costosa de falsificar era la única que no
+cobraba el extra por serlo.
+
 ### Moderación sin moderadores
 
 **Tres reportes de tres personas distintas** ocultan una publicación

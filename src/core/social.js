@@ -29,15 +29,19 @@ export const LIMITE_MB = 25;
 /** Puntuacion de aura, identica a la del servidor (solo para previsualizar). */
 export const AURA = Object.freeze({
   porPublicar: 8,
+  porPublicarSinMedio: 3,
   porMeGusta: 2,
   porEvidenciaVerificada: 5,
 });
 
-const VERIFICADOS = ['fechada', 'situada', 'video'];
+const VERIFICADOS = ['fechada', 'situada', 'video', 'envivo'];
 
-/** Aura que produciria una publicacion. El valor real lo calcula Postgres. */
-export function auraDe({ likes = 0, nivelEvidencia = null } = {}) {
-  return AURA.porPublicar
+/**
+ * Aura que produciria una publicacion. El valor real lo calcula Postgres; esto
+ * solo sirve para ensenarlo antes de pulsar.
+ */
+export function auraDe({ likes = 0, nivelEvidencia = null, conMedio = true } = {}) {
+  return (conMedio ? AURA.porPublicar : AURA.porPublicarSinMedio)
     + AURA.porMeGusta * Math.max(0, likes)
     + (VERIFICADOS.includes(nivelEvidencia) ? AURA.porEvidenciaVerificada : 0);
 }
@@ -153,7 +157,10 @@ export async function publicar(registro, blob, { descripcion = '', categoria = '
   const s = sesion();
   if (!s?.perfilId) throw new ErrorNube('No has iniciado sesion.', 'sin_sesion');
 
-  const ruta = await subirMedio(blob);
+  // El medio es OPCIONAL. Exigirlo dejaba fuera casi todo lo que se registra
+  // —beber agua del grifo, ir en bus, apagar el aire— y el espacio de cada
+  // persona salia medio vacio no por falta de acciones sino por falta de camara.
+  const ruta = blob ? await subirMedio(blob) : null;
   const fila = {
     perfil_id: s.perfilId,
     registro_id: registro.id,
@@ -161,7 +168,7 @@ export async function publicar(registro, blob, { descripcion = '', categoria = '
     categoria,
     descripcion: String(descripcion || '').slice(0, 200),
     ruta_medio: ruta,
-    tipo_medio: (blob.type || '').startsWith('video/') ? 'video' : 'foto',
+    tipo_medio: blob ? ((blob.type || '').startsWith('video/') ? 'video' : 'foto') : null,
     nivel_evidencia: registro.medio?.nivel || null,
     co2e: Number(registro.impacto?.co2e) || 0,
     puntos: Math.max(0, Math.round(Number(registro.puntos) || 0)),
@@ -186,9 +193,46 @@ export async function virales() {
   return llamarAPI('/rest/v1/virales?select=*');
 }
 
-/** Publicaciones de un perfil concreto, para su pagina publica. */
-export async function publicacionesDe(perfilId) {
-  return llamarAPI(`/rest/v1/muro?perfil_id=eq.${perfilId}&select=*`);
+/** Publicaciones de un perfil concreto, de lo mas reciente a lo mas antiguo. */
+export async function publicacionesDe(perfilId, limite = 60) {
+  return llamarAPI(
+    `/rest/v1/muro?perfil_id=eq.${perfilId}&select=*&limit=${Math.min(120, limite)}`);
+}
+
+/**
+ * El espacio de una persona: su ficha y todo lo que ha publicado.
+ *
+ * Se busca por MOTE porque es lo que se ve y lo que se dice en voz alta; el
+ * identificador interno no lo conoce nadie. Si el perfil no es publico, la RLS
+ * no devuelve la ficha y aqui se traduce a un mensaje en vez de a una pantalla
+ * en blanco.
+ *
+ * @param {string} mote sin la arroba
+ */
+export async function espacioDe(mote) {
+  const m = String(mote || '').trim().toLowerCase();
+  if (!m) throw new ErrorNube('Falta el mote.', 'entrada');
+  const fichas = await llamarAPI(
+    `/rest/v1/perfiles?mote=eq.${encodeURIComponent(m)}`
+    + '&select=id,nombre,mote,avatar,aura,puntos,nivel,co2e_total,registros_n,dias_activos,pais,creado');
+  const ficha = fichas?.[0];
+  if (!ficha) {
+    throw new ErrorNube(
+      `No hay ningun espacio en @${m}, o su perfil no es publico.`, 'no_encontrado');
+  }
+  return { ficha, publicaciones: await publicacionesDe(ficha.id) };
+}
+
+/** Mi propio espacio, sin tener que saberme el mote. */
+export async function miEspacio() {
+  const s = sesion();
+  if (!s?.perfilId) throw new ErrorNube('No has iniciado sesion.', 'sin_sesion');
+  const fichas = await llamarAPI(
+    `/rest/v1/perfiles?id=eq.${s.perfilId}`
+    + '&select=id,nombre,mote,avatar,aura,puntos,nivel,co2e_total,registros_n,dias_activos,pais,creado');
+  const ficha = fichas?.[0];
+  if (!ficha) throw new ErrorNube('Tu perfil todavia no esta en la nube.', 'no_encontrado');
+  return { ficha, publicaciones: await publicacionesDe(ficha.id), esMio: true };
 }
 
 /** Identificadores de las publicaciones a las que YA di me gusta. */

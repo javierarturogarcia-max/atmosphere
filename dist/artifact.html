@@ -394,6 +394,19 @@ tr.destacada td { background: rgba(52, 211, 153, 0.09); font-weight: 650; }
 .avatar-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .avatar-grande { box-shadow: 0 0 0 3px var(--borde), 0 10px 30px rgba(0, 0, 0, 0.35); }
 
+/* ── Espacio personal ────────────────────────────────────────────────────── */
+.ficha-espacio { display: flex; align-items: center; gap: 17px; flex-wrap: wrap; }
+.enlace-autor {
+  display: inline-flex; align-items: center; gap: 7px; min-width: 0;
+  border: none; background: none; padding: 0; cursor: pointer;
+  color: inherit; font: inherit; text-align: left; border-radius: 999px;
+  transition: opacity 120ms ease;
+}
+.enlace-autor:hover:not(:disabled) { opacity: 0.75; }
+.enlace-autor:disabled { cursor: default; }
+.enlace-autor strong { text-decoration: underline; text-decoration-color: transparent; transition: text-decoration-color 120ms ease; }
+.enlace-autor:hover:not(:disabled) strong { text-decoration-color: currentColor; }
+
 </style>
 <div id="app">
   <div style="display:flex;align-items:center;justify-content:center;min-height:70vh;flex-direction:column;gap:14px">
@@ -5912,6 +5925,1057 @@ async function capturar(opciones) {
   __exp.capturar = capturar;
 });
 
+__def("src/core/nube.js", function (__exp, __req) {
+/**
+ * nube.js — Sincronizacion opcional con Supabase.
+ *
+ * ARQUITECTURA LOCAL-FIRST. El almacen del dispositivo sigue siendo la fuente
+ * de verdad: la aplicacion funciona entera sin conexion y sin cuenta, igual que
+ * antes. La nube es un espejo que se activa por decision explicita del usuario
+ * y sirve para lo unico que no se puede hacer en local: comparar con personas
+ * reales y no perder el historial al cambiar de dispositivo.
+ *
+ * SIN DEPENDENCIAS. Se habla directamente con la API REST de Supabase
+ * (PostgREST + GoTrue) mediante fetch, en vez de instalar @supabase/supabase-js.
+ * Son cuatro llamadas HTTP: la biblioteca pesaria mas que todo este modulo y
+ * romperia el empaquetador de archivo unico.
+ *
+ * QUE SE ENVIA Y QUE NO:
+ *   - Se envian registros de accion (accion, cantidad, impacto, puntos, fecha).
+ *   - NO se envian fotos ni videos: las pruebas se quedan en el dispositivo.
+ *   - NO se envian coordenadas ni trazas GPS.
+ *   - Los registros son PRIVADOS en el servidor: al ranking solo llegan los
+ *     totales agregados del perfil.
+ */
+
+const CLAVE_CONFIG = 'atmosphere.nube.config.v1';
+const CLAVE_SESION = 'atmosphere.nube.sesion.v1';
+const CLAVE_SUBIDOS = 'atmosphere.nube.subidos.v1';
+
+const almacen = (() => {
+  try {
+    if (typeof localStorage !== 'undefined') return localStorage;
+  } catch { /* entorno sin almacenamiento */ }
+  const m = new Map();
+  return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, v), removeItem: (k) => m.delete(k) };
+})();
+
+const leerJSON = (clave, porDefecto) => {
+  try { const v = almacen.getItem(clave); return v ? JSON.parse(v) : porDefecto; } catch { return porDefecto; }
+};
+const guardarJSON = (clave, valor) => {
+  try { almacen.setItem(clave, JSON.stringify(valor)); return true; } catch { return false; }
+};
+
+class ErrorNube extends Error {
+  constructor(mensaje, codigo = 'desconocido') { super(mensaje); this.codigo = codigo; }
+}
+
+// ============================================================== configuracion
+
+/**
+ * Proyecto al que se conecta la app si nadie configura otro.
+ *
+ * SIN ESTO NO HAY RED SOCIAL. Pedirle a cada persona que pegue una URL y una
+ * clave antes de poder crear su cuenta convierte el primer paso en una tarea
+ * de programador: la companera a la que le pasas el enlace se encuentra un
+ * formulario de configuracion en vez de un "crear cuenta", y ahi se acaba.
+ * Con esto, quien abre el enlace ya esta conectado y solo elige su mote.
+ *
+ * LA CLAVE PUBLICA VA AQUI A PROPOSITO. Supabase la llama "publishable" justo
+ * porque esta pensada para vivir en el cliente: cualquiera que abra las
+ * herramientas del navegador la vera en cualquier aplicacion que use Supabase.
+ * Lo que protege los datos no es esconderla —seria imposible— sino las
+ * politicas RLS, que es donde esta puesto el esfuerzo de este proyecto. La
+ * clave SECRETA es otra cosa y nunca debe aparecer aqui; `esClaveSecreta()` la
+ * rechaza si alguien la pega por error.
+ *
+ * Para apuntar a otro proyecto: cambiar estas dos lineas, o pegar los datos en
+ * Perfil -> Nube, que tiene preferencia sobre este valor.
+ */
+const NUBE_POR_DEFECTO = {
+  url: 'https://anrebwrrkubkkaaunyna.supabase.co',
+  anonKey: 'sb_publishable_mU-ALe_ht0qx84oWwvGEnQ_rBMzXRu0',
+};
+
+/**
+ * Detecta una clave SECRETA pegada por error donde va la publica.
+ *
+ * Es el error mas grave posible en esta pantalla: la clave secreta salta TODAS
+ * las politicas de seguridad por fila, asi que publicarla en un sitio estatico
+ * daria control total de la base a cualquiera que abra el codigo fuente.
+ * Se comprueban las dos formas que existen: el prefijo del formato nuevo y el
+ * rol dentro del JWT del formato antiguo.
+ */
+function esClaveSecreta(clave) {
+  const k = String(clave || '');
+  if (/^sb_secret_/i.test(k)) return 'formato nuevo (sb_secret_)';
+  const partes = k.split('.');
+  if (partes.length === 3) {
+    try {
+      const carga = JSON.parse(atob(partes[1].replace(/-/g, '+').replace(/_/g, '/')));
+      if (carga?.role === 'service_role') return 'JWT con rol service_role';
+    } catch { /* no es un JWT legible */ }
+  }
+  return null;
+}
+
+/**
+ * Guarda la URL del proyecto y la clave publica.
+ *
+ * Se admiten los dos formatos que convivien: el nuevo `sb_publishable_...` y el
+ * antiguo JWT `eyJ...` (la clave "anon"), que Supabase mantiene por
+ * compatibilidad. Ambos son publicos por diseno: viven en el navegador y lo que
+ * protege los datos son las politicas RLS, no ocultar la clave.
+ */
+function configurar({ url, anonKey }) {
+  const u = String(url || '').trim().replace(/\/+$/, '');
+  let k = String(anonKey || '').trim().replace(/\s+/g, '');
+
+  if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(u)) {
+    throw new ErrorNube('La URL debe tener la forma https://xxxxx.supabase.co', 'url');
+  }
+
+  const secreta = esClaveSecreta(k);
+  if (secreta) {
+    throw new ErrorNube(
+      `Eso es una clave SECRETA (${secreta}), no la publica. Publicarla daria control total `
+      + 'de tu base de datos a cualquiera. Usa la "Publishable key" de Settings -> API Keys.',
+      'clave_secreta');
+  }
+
+  // Pegar la clave dos veces seguidas es un accidente frecuente al copiar.
+  if (k.length % 2 === 0 && k.length > 20 && k.slice(0, k.length / 2) === k.slice(k.length / 2)) {
+    k = k.slice(0, k.length / 2);
+  }
+
+  const esNueva = /^sb_publishable_[A-Za-z0-9_-]{10,}$/.test(k);
+  const esJWT = /^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(k);
+  if (!esNueva && !esJWT) {
+    throw new ErrorNube(
+      'La clave no tiene un formato reconocible. Debe empezar por "sb_publishable_" '
+      + '(formato actual) o por "eyJ" (clave anon antigua).',
+      'clave');
+  }
+
+  guardarJSON(CLAVE_CONFIG, { url: u, anonKey: k });
+  return { url: u, formato: esNueva ? 'publishable' : 'anon-jwt' };
+}
+
+/**
+ * Configuracion vigente: la que haya guardado la persona y, si no hay, la del
+ * proyecto por defecto. Nunca devuelve null salvo que se haya vaciado el
+ * proyecto por defecto en el codigo.
+ */
+function configuracion() {
+  const propia = leerJSON(CLAVE_CONFIG, null);
+  if (propia?.url && propia?.anonKey) return propia;
+  const { url, anonKey } = NUBE_POR_DEFECTO;
+  return url && anonKey ? { url, anonKey, porDefecto: true } : null;
+}
+
+/** Solo la configurada a mano. La pantalla de ajustes necesita distinguirlas. */
+function configuracionPropia() { return leerJSON(CLAVE_CONFIG, null); }
+
+function estaConfigurada() { return !!configuracion(); }
+function sesion() { return leerJSON(CLAVE_SESION, null); }
+function haySesion() { const s = sesion(); return !!(s && s.access_token && s.perfilId); }
+
+function desconectar() {
+  almacen.removeItem(CLAVE_SESION);
+  almacen.removeItem(CLAVE_SUBIDOS);
+}
+
+/**
+ * Borra la sesion y la configuracion propia. Si hay proyecto por defecto, la
+ * app vuelve a el en vez de quedarse sin nube.
+ */
+function olvidarTodo() {
+  desconectar();
+  almacen.removeItem(CLAVE_CONFIG);
+}
+
+// ================================================================== transporte
+
+/**
+ * Transporte compartido con la capa social (social.js). Se exporta para no
+ * duplicar el manejo de cabeceras, errores y sesion caducada en dos modulos.
+ */
+async function llamarAPI(ruta, opciones = {}) {
+  return llamar(ruta, opciones);
+}
+
+async function llamar(ruta, { metodo = 'GET', cuerpo = null, autenticado = true, cabeceras = {} } = {}) {
+  const cfg = configuracion();
+  if (!cfg) throw new ErrorNube('La nube no esta configurada.', 'sin_configurar');
+
+  const s = sesion();
+  // La clave publica va SOLO en la cabecera `apikey`. Las claves del formato
+  // nuevo no son JWT, asi que mandarlas tambien como `Authorization: Bearer`
+  // —cosa que hacen muchos clientes por defecto— haria que el servidor
+  // intentase interpretarlas como JWT y rechazase la peticion con "Invalid JWT".
+  // En `Authorization` solo viaja el token de sesion del usuario.
+  const h = {
+    apikey: cfg.anonKey,
+    'Content-Type': 'application/json',
+    ...cabeceras,
+  };
+  if (autenticado) {
+    if (!s?.access_token) throw new ErrorNube('No has iniciado sesion.', 'sin_sesion');
+    h.Authorization = `Bearer ${s.access_token}`;
+  }
+
+  let res;
+  try {
+    res = await fetch(`${cfg.url}${ruta}`, {
+      method: metodo,
+      headers: h,
+      body: cuerpo === null ? undefined : JSON.stringify(cuerpo),
+    });
+  } catch {
+    throw new ErrorNube('Sin conexion con el servidor.', 'red');
+  }
+
+  if (res.status === 401 || res.status === 403) {
+    throw new ErrorNube('La sesion ha caducado. Vuelve a entrar.', 'sesion_caducada');
+  }
+  const texto = await res.text();
+  let datos = null;
+  if (texto) { try { datos = JSON.parse(texto); } catch { datos = texto; } }
+
+  if (!res.ok) {
+    const msg = datos?.message || datos?.error_description || datos?.msg || `Error ${res.status}`;
+    throw new ErrorNube(msg, res.status >= 500 ? 'servidor' : 'peticion');
+  }
+  return datos;
+}
+
+// ==================================================================== cuenta
+
+/**
+ * A donde debe volver el enlace del correo de confirmacion.
+ *
+ * Sin esto, GoTrue usa el "Site URL" del proyecto, que en uno recien creado es
+ * http://localhost:3000: quien confirma desde el movil aterriza en el
+ * localhost de SU propio telefono y ve ERR_CONNECTION_REFUSED. Mandando la
+ * direccion real de esta pagina, el enlace vuelve a donde se pidio el alta,
+ * sea github.io, un dominio propio o el servidor de desarrollo.
+ *
+ * Supabase solo respeta esta direccion si esta en la lista de "Redirect URLs"
+ * del proyecto; si no lo esta, cae al Site URL. Por eso el arreglo completo
+ * necesita las dos cosas, y db/INSTALACION.md lo explica.
+ */
+function direccionDeVuelta() {
+  if (typeof location === 'undefined' || !location.protocol.startsWith('http')) return null;
+  return `${location.origin}${location.pathname}`;
+}
+
+async function crearCuenta(email, contrasena, { nombre = 'Guardian', pais = 'WW' } = {}) {
+  const vuelta = direccionDeVuelta();
+  const datos = await llamar(
+    `/auth/v1/signup${vuelta ? `?redirect_to=${encodeURIComponent(vuelta)}` : ''}`, {
+      metodo: 'POST', autenticado: false,
+      cuerpo: { email, password: contrasena, data: { nombre, pais } },
+    });
+  // Con confirmacion por correo activada, todavia no hay token.
+  if (datos?.access_token) {
+    guardarJSON(CLAVE_SESION, { access_token: datos.access_token, refresh_token: datos.refresh_token, perfilId: datos.user?.id, email });
+    return { ok: true, confirmacionPendiente: false };
+  }
+  return { ok: true, confirmacionPendiente: true };
+}
+
+/** El id del usuario va en el campo "sub" del JWT; se lee sin pedir nada. */
+function sujetoDeJWT(token) {
+  try {
+    const carga = JSON.parse(atob(String(token).split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return carga?.sub || null;
+  } catch { return null; }
+}
+
+/**
+ * Recoge la sesion que GoTrue deja en la URL al volver del correo.
+ *
+ * Al confirmar, Supabase redirige a la app con los tokens en el fragmento:
+ *   #access_token=...&refresh_token=...&type=signup
+ * Sin esto, la persona aterriza en la app SIN sesion despues de haber
+ * confirmado, y tiene que escribir usuario y contrasena otra vez sin entender
+ * por que. Tambien recoge el caso de error (enlace caducado o ya usado), que
+ * llega igual por el fragmento.
+ *
+ * Limpia la URL despues, porque el fragmento es ademas el enrutador de la app
+ * y un token ahi la mandaria a una ruta inexistente — y quedaria en el
+ * historial del navegador.
+ *
+ * @returns {{estado:'sesion'|'error'|'nada', tipo?:string, mensaje?:string}}
+ */
+function recogerSesionDeURL(loc = typeof location !== 'undefined' ? location : null) {
+  if (!loc) return { estado: 'nada' };
+  const bruto = String(loc.hash || '').replace(/^#/, '');
+  if (!bruto.includes('=')) return { estado: 'nada' };
+  const p = new URLSearchParams(bruto);
+
+  const limpiar = () => {
+    try {
+      history.replaceState(null, '', `${loc.pathname}${loc.search}`);
+    } catch { /* sin history: se queda la URL sucia, pero la sesion ya esta */ }
+  };
+
+  if (p.get('error') || p.get('error_description')) {
+    const desc = p.get('error_description') || p.get('error') || '';
+    limpiar();
+    return {
+      estado: 'error',
+      mensaje: /expired|invalid/i.test(desc)
+        ? 'Ese enlace de confirmacion ya caduco o se uso. Vuelve a entrar con tu correo y contrasena.'
+        : desc.replace(/\+/g, ' '),
+    };
+  }
+
+  const access = p.get('access_token');
+  const refresh = p.get('refresh_token');
+  if (!access) return { estado: 'nada' };
+
+  const perfilId = sujetoDeJWT(access);
+  if (!perfilId) return { estado: 'nada' };
+  guardarJSON(CLAVE_SESION, { access_token: access, refresh_token: refresh, perfilId, email: null });
+  limpiar();
+  return { estado: 'sesion', tipo: p.get('type') || 'signup' };
+}
+
+async function entrar(email, contrasena) {
+  const datos = await llamar('/auth/v1/token?grant_type=password', {
+    metodo: 'POST', autenticado: false,
+    cuerpo: { email, password: contrasena },
+  });
+  if (!datos?.access_token) throw new ErrorNube('Credenciales incorrectas.', 'credenciales');
+  guardarJSON(CLAVE_SESION, {
+    access_token: datos.access_token, refresh_token: datos.refresh_token,
+    perfilId: datos.user?.id, email,
+  });
+  return { perfilId: datos.user?.id };
+}
+
+// ============================================================ sincronizacion
+
+/**
+ * Registros locales que aun no se han subido.
+ * Funcion pura para poder probarla sin red.
+ */
+function pendientesDeSubir(registrosLocales, idsSubidos) {
+  const ya = new Set(idsSubidos || []);
+  return (registrosLocales || []).filter((r) => r && r.id && !ya.has(r.id));
+}
+
+/**
+ * Traduce un registro local a la fila que espera la base de datos.
+ * Deja fuera a proposito la prueba grafica, la nota y cualquier coordenada:
+ * al servidor solo va lo que necesita el ranking.
+ */
+function aFilaRegistro(registro, categoria, perfilId) {
+  return {
+    id: registro.id,
+    perfil_id: perfilId,
+    accion_id: registro.accionId,
+    categoria: categoria || 'otras',
+    cantidad: Number(registro.cantidad) || 0,
+    unidad: registro.unidad || 'ud',
+    co2e: Number(registro.impacto?.co2e) || 0,
+    agua: Number(registro.impacto?.agua) || 0,
+    residuo: Number(registro.impacto?.residuo) || 0,
+    puntos: Math.max(0, Math.round(Number(registro.puntos) || 0)),
+    evidencia: registro.evidencia || null,
+    nivel_evidencia: registro.medio?.nivel || null,
+    fecha: registro.fecha,
+  };
+}
+
+/** Divide una lista en lotes, para no enviar miles de filas de golpe. */
+function enLotes(items, tamano = 100) {
+  const lotes = [];
+  for (let i = 0; i < items.length; i += tamano) lotes.push(items.slice(i, i + tamano));
+  return lotes;
+}
+
+function idsSubidos() { return leerJSON(CLAVE_SUBIDOS, []); }
+function marcarSubidos(ids) {
+  guardarJSON(CLAVE_SUBIDOS, [...new Set([...idsSubidos(), ...ids])]);
+}
+
+/**
+ * Sube los registros pendientes y devuelve el perfil recalculado por el servidor.
+ * @param {Array} registros registros locales
+ * @param {(id:string)=>string} categoriaDe funcion que da la categoria de una accion
+ */
+async function sincronizar(registros, categoriaDe) {
+  const s = sesion();
+  if (!s?.perfilId) throw new ErrorNube('No has iniciado sesion.', 'sin_sesion');
+
+  const pendientes = pendientesDeSubir(registros, idsSubidos());
+  let subidos = 0;
+  const rechazados = [];
+
+  for (const lote of enLotes(pendientes, 100)) {
+    const filas = lote.map((r) => aFilaRegistro(r, categoriaDe(r.accionId), s.perfilId));
+    try {
+      // merge-duplicates hace la subida idempotente: reenviar tras un corte de
+      // red no duplica nada, porque la clave primaria es el id del dispositivo.
+      await llamar('/rest/v1/registros', {
+        metodo: 'POST', cuerpo: filas,
+        cabeceras: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      });
+      marcarSubidos(lote.map((r) => r.id));
+      subidos += lote.length;
+    } catch (e) {
+      rechazados.push({ n: lote.length, motivo: e.message });
+    }
+  }
+
+  const perfil = await miPerfil();
+  return { subidos, pendientes: pendientes.length - subidos, rechazados, perfil };
+}
+
+/** Perfil propio, con los totales que ha calculado el servidor. */
+async function miPerfil() {
+  const s = sesion();
+  const filas = await llamar(`/rest/v1/perfiles?id=eq.${s.perfilId}&select=*`);
+  return Array.isArray(filas) ? filas[0] || null : null;
+}
+
+/** Cambia los unicos campos que el cliente tiene permiso de escribir. */
+async function actualizarPerfil({ nombre, pais, publico }) {
+  const s = sesion();
+  const cambios = {};
+  if (nombre !== undefined) cambios.nombre = nombre;
+  if (pais !== undefined) cambios.pais = pais;
+  if (publico !== undefined) cambios.publico = publico;
+  if (!Object.keys(cambios).length) return null;
+  return llamar(`/rest/v1/perfiles?id=eq.${s.perfilId}`, {
+    metodo: 'PATCH', cuerpo: cambios, cabeceras: { Prefer: 'return=representation' },
+  });
+}
+
+// ======================================================================= social
+
+async function rankingGlobal(limite = 50) {
+  return llamar(`/rest/v1/ranking_global?select=*&limit=${Math.min(200, limite)}`);
+}
+
+async function impactoComunidad() {
+  const filas = await llamar('/rest/v1/impacto_comunidad?select=*');
+  return Array.isArray(filas) ? filas[0] || null : null;
+}
+
+async function misGrupos() {
+  const s = sesion();
+  return llamar(`/rest/v1/miembros?perfil_id=eq.${s.perfilId}&select=rol,unido,grupos(id,nombre,codigo,tipo)`);
+}
+
+async function rankingGrupo(grupoId) {
+  return llamar(`/rest/v1/ranking_grupos?grupo_id=eq.${grupoId}&select=*`);
+}
+
+/** Codigo de grupo legible: 6 caracteres sin los que se confunden (0/O, 1/I). */
+function generarCodigo(rnd = Math.random) {
+  const alfabeto = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let c = '';
+  for (let i = 0; i < 6; i++) c += alfabeto[Math.floor(rnd() * alfabeto.length)];
+  return c;
+}
+
+async function crearGrupo(nombre, tipo = 'clase') {
+  const s = sesion();
+  const codigo = generarCodigo();
+  const creado = await llamar('/rest/v1/grupos', {
+    metodo: 'POST', cuerpo: { nombre, codigo, tipo, creador: s.perfilId },
+    cabeceras: { Prefer: 'return=representation' },
+  });
+  const grupo = Array.isArray(creado) ? creado[0] : creado;
+  await llamar('/rest/v1/miembros', {
+    metodo: 'POST', cuerpo: { grupo_id: grupo.id, perfil_id: s.perfilId, rol: 'gestor' },
+    cabeceras: { Prefer: 'return=minimal' },
+  });
+  return grupo;
+}
+
+async function unirseAGrupo(codigo) {
+  return llamar('/rest/v1/rpc/unirse_por_codigo', {
+    metodo: 'POST', cuerpo: { p_codigo: String(codigo || '').toUpperCase().trim() },
+  });
+}
+
+/**
+ * Mezcla el ranking del servidor con el perfil propio y calcula la posicion.
+ * Pura: se puede probar sin red.
+ */
+function situarEnRanking(filas, miId) {
+  const tabla = [...(filas || [])]
+    .sort((a, b) => (b.puntos || 0) - (a.puntos || 0))
+    .map((f, i) => ({ ...f, posicion: i + 1, esUsuario: f.id === miId }));
+  const yo = tabla.find((f) => f.esUsuario) || null;
+  const siguiente = yo && yo.posicion > 1 ? tabla[yo.posicion - 2] : null;
+  return {
+    tabla,
+    posicion: yo?.posicion ?? null,
+    total: tabla.length,
+    faltanParaSubir: siguiente && yo ? Math.max(0, (siguiente.puntos || 0) - (yo.puntos || 0) + 1) : 0,
+  };
+}
+
+  __exp.ErrorNube = ErrorNube;
+  __exp.NUBE_POR_DEFECTO = NUBE_POR_DEFECTO;
+  __exp.esClaveSecreta = esClaveSecreta;
+  __exp.configurar = configurar;
+  __exp.configuracion = configuracion;
+  __exp.configuracionPropia = configuracionPropia;
+  __exp.estaConfigurada = estaConfigurada;
+  __exp.sesion = sesion;
+  __exp.haySesion = haySesion;
+  __exp.desconectar = desconectar;
+  __exp.olvidarTodo = olvidarTodo;
+  __exp.llamarAPI = llamarAPI;
+  __exp.direccionDeVuelta = direccionDeVuelta;
+  __exp.crearCuenta = crearCuenta;
+  __exp.sujetoDeJWT = sujetoDeJWT;
+  __exp.recogerSesionDeURL = recogerSesionDeURL;
+  __exp.entrar = entrar;
+  __exp.pendientesDeSubir = pendientesDeSubir;
+  __exp.aFilaRegistro = aFilaRegistro;
+  __exp.enLotes = enLotes;
+  __exp.sincronizar = sincronizar;
+  __exp.miPerfil = miPerfil;
+  __exp.actualizarPerfil = actualizarPerfil;
+  __exp.rankingGlobal = rankingGlobal;
+  __exp.impactoComunidad = impactoComunidad;
+  __exp.misGrupos = misGrupos;
+  __exp.rankingGrupo = rankingGrupo;
+  __exp.generarCodigo = generarCodigo;
+  __exp.crearGrupo = crearGrupo;
+  __exp.unirseAGrupo = unirseAGrupo;
+  __exp.situarEnRanking = situarEnRanking;
+});
+
+__def("src/core/social.js", function (__exp, __req) {
+/**
+ * social.js — Comunidad: publicaciones, me gusta y aura.
+ *
+ * DOS MONEDAS DISTINTAS, A PROPOSITO:
+ *   puntos = impacto fisico medido (kg CO2e, litros, residuo)
+ *   aura   = reconocimiento de la comunidad
+ *
+ * Separarlas evita el peor riesgo de una app ambiental con capa social: que un
+ * video gracioso valga mas que plantar un arbol. Los puntos siguen saliendo
+ * solo de la fisica; el aura mide otra cosa —contagiar el habito— y se muestra
+ * aparte. Nunca se suman.
+ *
+ * El aura tampoco la escribe el cliente: la deriva el servidor de las
+ * publicaciones y los me gusta, con los mismos candados que los puntos. Ni
+ * auto-me-gusta, ni me gusta repetido, ni publicar sobre un registro ajeno.
+ *
+ * PRIVACIDAD: publicar es una decision explicita POR ACCION. La promesa de que
+ * las pruebas no salen del dispositivo sigue en pie para todo lo demas; solo
+ * viaja el medio de la accion concreta que la persona elige compartir.
+ */
+const { configuracion, sesion, llamarAPI, ErrorNube } = __req("src/core/nube.js");
+
+/** Cubo de Supabase Storage donde viven los medios publicados. */
+const CUBO = 'evidencias';
+
+/** Tamano maximo de un medio publicado. Un clip corto cabe de sobra. */
+const LIMITE_MB = 25;
+
+/** Puntuacion de aura, identica a la del servidor (solo para previsualizar). */
+const AURA = Object.freeze({
+  porPublicar: 8,
+  porPublicarSinMedio: 3,
+  porMeGusta: 2,
+  porEvidenciaVerificada: 5,
+});
+
+const VERIFICADOS = ['fechada', 'situada', 'video', 'envivo'];
+
+/**
+ * Aura que produciria una publicacion. El valor real lo calcula Postgres; esto
+ * solo sirve para ensenarlo antes de pulsar.
+ */
+function auraDe({ likes = 0, nivelEvidencia = null, conMedio = true } = {}) {
+  return (conMedio ? AURA.porPublicar : AURA.porPublicarSinMedio)
+    + AURA.porMeGusta * Math.max(0, likes)
+    + (VERIFICADOS.includes(nivelEvidencia) ? AURA.porEvidenciaVerificada : 0);
+}
+
+/**
+ * Valida un mote antes de gastar una peticion.
+ * Minusculas, digitos y guion bajo; de 3 a 15. Sin mayusculas ni acentos para
+ * que sea inequivoco al dictarlo y no existan dos motes visualmente iguales.
+ */
+function validarMote(mote) {
+  const m = String(mote || '').trim().toLowerCase();
+  if (!m) return { ok: false, motivo: 'Escribe un mote.' };
+  if (m.length < 3) return { ok: false, motivo: 'Mínimo 3 caracteres.' };
+  if (m.length > 15) return { ok: false, motivo: 'Máximo 15 caracteres.' };
+  if (!/^[a-z0-9_]+$/.test(m)) {
+    return { ok: false, motivo: 'Solo letras sin acentos, números y guion bajo.' };
+  }
+  return { ok: true, mote: m };
+}
+
+/** Extension del archivo a partir de su tipo MIME. */
+function extensionDe(tipoMime) {
+  const mapa = {
+    'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp',
+    'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov',
+  };
+  return mapa[String(tipoMime || '').toLowerCase()] || (String(tipoMime).startsWith('video/') ? 'mp4' : 'jpg');
+}
+
+/** Ruta dentro del cubo: cada quien escribe solo en su carpeta (su uuid). */
+function rutaMedio(perfilId, tipoMime) {
+  const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  return `${perfilId}/${id}.${extensionDe(tipoMime)}`;
+}
+
+/** URL publica de un medio ya subido. */
+function urlMedio(ruta) {
+  const cfg = configuracion();
+  if (!cfg || !ruta) return null;
+  return `${cfg.url}/storage/v1/object/public/${CUBO}/${encodeURI(ruta)}`;
+}
+
+/**
+ * Sube un medio al almacen. No pasa por llamarAPI porque el cuerpo es binario
+ * y la cabecera Content-Type debe ser la del propio archivo, no JSON.
+ */
+async function subirMedio(blob) {
+  const cfg = configuracion();
+  const s = sesion();
+  if (!cfg) throw new ErrorNube('La nube no esta configurada.', 'sin_configurar');
+  if (!s?.access_token) throw new ErrorNube('No has iniciado sesion.', 'sin_sesion');
+  if (!blob || !blob.size) throw new ErrorNube('No hay archivo que subir.', 'entrada');
+  if (blob.size > LIMITE_MB * 1048576) {
+    throw new ErrorNube(`El archivo pesa ${(blob.size / 1048576).toFixed(1)} MB y el limite es ${LIMITE_MB} MB.`, 'tamano');
+  }
+
+  const ruta = rutaMedio(s.perfilId, blob.type);
+  let res;
+  try {
+    res = await fetch(`${cfg.url}/storage/v1/object/${CUBO}/${ruta}`, {
+      method: 'POST',
+      headers: {
+        apikey: cfg.anonKey,
+        Authorization: `Bearer ${s.access_token}`,
+        'Content-Type': blob.type || 'application/octet-stream',
+        'x-upsert': 'false',
+      },
+      body: blob,
+    });
+  } catch {
+    throw new ErrorNube('No se pudo subir el archivo.', 'red');
+  }
+  if (!res.ok) {
+    const texto = await res.text().catch(() => '');
+    throw new ErrorNube(diagnosticoAlmacen(res.status, texto), 'almacen');
+  }
+  return ruta;
+}
+
+/**
+ * Traduce el rechazo del almacen a algo que se pueda arreglar.
+ *
+ * Los dos fallos habituales no son del codigo sino de la instalacion, porque
+ * el guion de la base de datos omite el cubo o sus politicas cuando el rol del
+ * editor SQL no es dueno de storage.objects. Sin este mensaje, lo que ve la
+ * persona es un numero y un texto en ingles del servidor.
+ *
+ * @param {number} estado codigo HTTP
+ * @param {string} texto cuerpo de la respuesta
+ * @returns {string} mensaje con el siguiente paso concreto
+ */
+function diagnosticoAlmacen(estado, texto) {
+  const t = String(texto || '').toLowerCase();
+  if (estado === 404 || t.includes('bucket not found')) {
+    return 'Falta el cubo "evidencias" en tu proyecto. Crealo en Supabase: '
+         + 'Storage -> New bucket -> nombre "evidencias", marca Public bucket.';
+  }
+  if (estado === 403 || estado === 400 || t.includes('row-level security') || t.includes('unauthorized')) {
+    return 'El almacen existe pero le faltan las politicas de acceso. '
+         + 'Ponlas en Supabase: Storage -> Policies sobre el cubo "evidencias" '
+         + '(estan copiadas en db/INSTALACION.md).';
+  }
+  return `El almacen rechazo el archivo (${estado}). ${String(texto || '').slice(0, 120)}`;
+}
+
+/**
+ * Publica una accion en el muro.
+ * @param {object} registro registro local ya sincronizado
+ * @param {Blob} blob foto o video de la accion
+ * @param {{descripcion?:string, categoria?:string}} extra
+ */
+async function publicar(registro, blob, { descripcion = '', categoria = 'otras' } = {}) {
+  const s = sesion();
+  if (!s?.perfilId) throw new ErrorNube('No has iniciado sesion.', 'sin_sesion');
+
+  // El medio es OPCIONAL. Exigirlo dejaba fuera casi todo lo que se registra
+  // —beber agua del grifo, ir en bus, apagar el aire— y el espacio de cada
+  // persona salia medio vacio no por falta de acciones sino por falta de camara.
+  const ruta = blob ? await subirMedio(blob) : null;
+  const fila = {
+    perfil_id: s.perfilId,
+    registro_id: registro.id,
+    accion_id: registro.accionId,
+    categoria,
+    descripcion: String(descripcion || '').slice(0, 200),
+    ruta_medio: ruta,
+    tipo_medio: blob ? ((blob.type || '').startsWith('video/') ? 'video' : 'foto') : null,
+    nivel_evidencia: registro.medio?.nivel || null,
+    co2e: Number(registro.impacto?.co2e) || 0,
+    puntos: Math.max(0, Math.round(Number(registro.puntos) || 0)),
+  };
+  const creado = await llamarAPI('/rest/v1/publicaciones', {
+    metodo: 'POST', cuerpo: fila, cabeceras: { Prefer: 'return=representation' },
+  });
+  return Array.isArray(creado) ? creado[0] : creado;
+}
+
+async function borrarPublicacion(id) {
+  return llamarAPI(`/rest/v1/publicaciones?id=eq.${id}`, { metodo: 'DELETE' });
+}
+
+/** Muro: lo mas reciente de toda la comunidad. */
+async function muro(limite = 30, desde = 0) {
+  return llamarAPI(`/rest/v1/muro?select=*&limit=${Math.min(60, limite)}&offset=${Math.max(0, desde)}`);
+}
+
+/** Virales: lo mas gustado de los ultimos siete dias. */
+async function virales() {
+  return llamarAPI('/rest/v1/virales?select=*');
+}
+
+/** Publicaciones de un perfil concreto, de lo mas reciente a lo mas antiguo. */
+async function publicacionesDe(perfilId, limite = 60) {
+  return llamarAPI(
+    `/rest/v1/muro?perfil_id=eq.${perfilId}&select=*&limit=${Math.min(120, limite)}`);
+}
+
+/**
+ * El espacio de una persona: su ficha y todo lo que ha publicado.
+ *
+ * Se busca por MOTE porque es lo que se ve y lo que se dice en voz alta; el
+ * identificador interno no lo conoce nadie. Si el perfil no es publico, la RLS
+ * no devuelve la ficha y aqui se traduce a un mensaje en vez de a una pantalla
+ * en blanco.
+ *
+ * @param {string} mote sin la arroba
+ */
+async function espacioDe(mote) {
+  const m = String(mote || '').trim().toLowerCase();
+  if (!m) throw new ErrorNube('Falta el mote.', 'entrada');
+  const fichas = await llamarAPI(
+    `/rest/v1/perfiles?mote=eq.${encodeURIComponent(m)}`
+    + '&select=id,nombre,mote,avatar,aura,puntos,nivel,co2e_total,registros_n,dias_activos,pais,creado');
+  const ficha = fichas?.[0];
+  if (!ficha) {
+    throw new ErrorNube(
+      `No hay ningun espacio en @${m}, o su perfil no es publico.`, 'no_encontrado');
+  }
+  return { ficha, publicaciones: await publicacionesDe(ficha.id) };
+}
+
+/** Mi propio espacio, sin tener que saberme el mote. */
+async function miEspacio() {
+  const s = sesion();
+  if (!s?.perfilId) throw new ErrorNube('No has iniciado sesion.', 'sin_sesion');
+  const fichas = await llamarAPI(
+    `/rest/v1/perfiles?id=eq.${s.perfilId}`
+    + '&select=id,nombre,mote,avatar,aura,puntos,nivel,co2e_total,registros_n,dias_activos,pais,creado');
+  const ficha = fichas?.[0];
+  if (!ficha) throw new ErrorNube('Tu perfil todavia no esta en la nube.', 'no_encontrado');
+  return { ficha, publicaciones: await publicacionesDe(ficha.id), esMio: true };
+}
+
+/** Identificadores de las publicaciones a las que YA di me gusta. */
+/**
+ * Reacciones posibles.
+ *
+ * TODAS VALEN LO MISMO EN AURA, y no es un descuido. Si el corazon puntuara mas
+ * que el me gusta, la gente elegiria por lo que suma y no por lo que siente, y
+ * el dato dejaria de decir nada sobre la publicacion. Lo que cambia es el
+ * matiz que se expresa, no el precio.
+ */
+const REACCIONES = Object.freeze([
+  { tipo: 'me_gusta',   icono: '👍', etiqueta: 'Me gusta' },
+  { tipo: 'me_encanta', icono: '😍', etiqueta: 'Me encanta' },
+  { tipo: 'corazon',    icono: '❤️', etiqueta: 'Corazón' },
+  { tipo: 'aplauso',    icono: '👏', etiqueta: 'Bien hecho' },
+  { tipo: 'inspira',    icono: '🌱', etiqueta: 'Me inspira' },
+]);
+
+const TIPOS_REACCION = Object.freeze(REACCIONES.map((r) => r.tipo));
+
+/** Datos de una reaccion por su tipo, con respaldo si llega uno desconocido. */
+function reaccion(tipo) {
+  return REACCIONES.find((r) => r.tipo === tipo) || REACCIONES[0];
+}
+
+/** Mis reacciones, como mapa publicacion -> tipo. */
+async function misReacciones() {
+  const s = sesion();
+  if (!s?.perfilId) return new Map();
+  const filas = await llamarAPI(
+    `/rest/v1/megusta?perfil_id=eq.${s.perfilId}&select=publicacion_id,tipo`);
+  return new Map((filas || []).map((f) => [f.publicacion_id, f.tipo || 'me_gusta']));
+}
+
+/** Compatibilidad: solo el conjunto de publicaciones a las que reaccione. */
+async function misMeGusta() {
+  return new Set((await misReacciones()).keys());
+}
+
+async function darMeGusta(publicacionId, tipo = 'me_gusta') {
+  const s = sesion();
+  return llamarAPI('/rest/v1/megusta', {
+    metodo: 'POST',
+    cuerpo: { publicacion_id: publicacionId, perfil_id: s.perfilId, tipo: normalizar(tipo) },
+    cabeceras: { Prefer: 'return=minimal' },
+  });
+}
+
+/** Cambia el matiz sin quitar y volver a poner: el aura no parpadea. */
+async function cambiarReaccion(publicacionId, tipo) {
+  const s = sesion();
+  return llamarAPI(
+    `/rest/v1/megusta?publicacion_id=eq.${publicacionId}&perfil_id=eq.${s.perfilId}`, {
+      metodo: 'PATCH', cuerpo: { tipo: normalizar(tipo) },
+      cabeceras: { Prefer: 'return=minimal' },
+    });
+}
+
+async function quitarMeGusta(publicacionId) {
+  const s = sesion();
+  return llamarAPI(`/rest/v1/megusta?publicacion_id=eq.${publicacionId}&perfil_id=eq.${s.perfilId}`,
+    { metodo: 'DELETE' });
+}
+
+function normalizar(tipo) {
+  return TIPOS_REACCION.includes(tipo) ? tipo : 'me_gusta';
+}
+
+/**
+ * Aplica una reaccion y devuelve el tipo resultante, o null si se retiro.
+ *
+ * Pulsar la misma que ya tenias la quita; pulsar otra la cambia. Es el gesto
+ * que la gente ya conoce, y evita el estado raro de "reaccione dos veces".
+ *
+ * @param {string} publicacionId
+ * @param {string|null} actual la reaccion que ya tenias, o null
+ * @param {string} elegida
+ * @returns {Promise<string|null>}
+ */
+async function aplicarReaccion(publicacionId, actual, elegida) {
+  const nueva = normalizar(elegida);
+  if (actual === nueva) { await quitarMeGusta(publicacionId); return null; }
+  if (actual) { await cambiarReaccion(publicacionId, nueva); return nueva; }
+  await darMeGusta(publicacionId, nueva);
+  return nueva;
+}
+
+/** Compatibilidad con el alternar simple de antes. */
+async function alternarMeGusta(publicacionId, teGusta) {
+  return (await aplicarReaccion(publicacionId, teGusta ? 'me_gusta' : null, 'me_gusta')) !== null;
+}
+
+async function reportar(publicacionId, motivo = 'inapropiado') {
+  const s = sesion();
+  return llamarAPI('/rest/v1/reportes', {
+    metodo: 'POST',
+    cuerpo: { publicacion_id: publicacionId, perfil_id: s.perfilId, motivo },
+    cabeceras: { Prefer: 'return=minimal' },
+  });
+}
+
+/** Fija el mote publico. El servidor rechaza duplicados con un error propio. */
+async function fijarMote(mote) {
+  const v = validarMote(mote);
+  if (!v.ok) throw new ErrorNube(v.motivo, 'mote');
+  const s = sesion();
+  try {
+    await llamarAPI(`/rest/v1/perfiles?id=eq.${s.perfilId}`, {
+      metodo: 'PATCH', cuerpo: { mote: v.mote }, cabeceras: { Prefer: 'return=minimal' },
+    });
+  } catch (e) {
+    if (/duplicate|unique|23505/i.test(e.message)) {
+      throw new ErrorNube(`El mote "${v.mote}" ya esta cogido. Prueba otro.`, 'mote_ocupado');
+    }
+    throw e;
+  }
+  return v.mote;
+}
+
+/**
+ * Sube la foto de perfil y la deja apuntada en el perfil.
+ *
+ * Va al mismo cubo que las pruebas y bajo la carpeta del propio perfil, asi que
+ * la reutiliza la politica que ya existe: cada quien escribe solo en lo suyo.
+ * En la fila se guarda la RUTA, no la imagen: meter la foto en el perfil la
+ * haria viajar entera en cada consulta del ranking y del muro.
+ *
+ * @param {Blob} blob imagen ya reescalada
+ * @returns {Promise<string>} ruta dentro del cubo
+ */
+async function subirAvatar(blob) {
+  const s = sesion();
+  if (!s?.perfilId) throw new ErrorNube('No has iniciado sesion.', 'sin_sesion');
+  const anterior = (await llamarAPI(
+    `/rest/v1/perfiles?id=eq.${s.perfilId}&select=avatar`))?.[0]?.avatar || null;
+
+  const ruta = await subirMedio(blob);
+  await llamarAPI(`/rest/v1/perfiles?id=eq.${s.perfilId}`, {
+    metodo: 'PATCH', cuerpo: { avatar: ruta }, cabeceras: { Prefer: 'return=minimal' },
+  });
+
+  // La anterior se borra DESPUES de apuntar la nueva. Al reves, un corte de red
+  // en medio dejaria el perfil apuntando a un archivo que ya no existe.
+  if (anterior && anterior !== ruta) await borrarMedioAlmacen(anterior).catch(() => {});
+  return ruta;
+}
+
+/** Quita la foto del perfil y borra el archivo. */
+async function quitarAvatar() {
+  const s = sesion();
+  if (!s?.perfilId) throw new ErrorNube('No has iniciado sesion.', 'sin_sesion');
+  const anterior = (await llamarAPI(
+    `/rest/v1/perfiles?id=eq.${s.perfilId}&select=avatar`))?.[0]?.avatar || null;
+  await llamarAPI(`/rest/v1/perfiles?id=eq.${s.perfilId}`, {
+    metodo: 'PATCH', cuerpo: { avatar: null }, cabeceras: { Prefer: 'return=minimal' },
+  });
+  if (anterior) await borrarMedioAlmacen(anterior).catch(() => {});
+}
+
+/** Borra un archivo del cubo. La politica solo deja borrar lo propio. */
+async function borrarMedioAlmacen(ruta) {
+  const cfg = configuracion();
+  const s = sesion();
+  if (!cfg || !s?.access_token || !ruta) return;
+  await fetch(`${cfg.url}/storage/v1/object/${CUBO}/${encodeURI(ruta)}`, {
+    method: 'DELETE',
+    headers: { apikey: cfg.anonKey, Authorization: `Bearer ${s.access_token}` },
+  });
+}
+
+/**
+ * Mote reservado durante un alta que quedo pendiente de confirmar el correo.
+ *
+ * Cuando el proyecto exige confirmacion, el alta no devuelve sesion y todavia
+ * no hay perfil al que ponerle el mote. Guardarlo aqui evita que la persona
+ * tenga que acordarse de volver a elegirlo tres dias despues, cuando por fin
+ * abra el correo.
+ */
+const CLAVE_MOTE_PENDIENTE = 'atmosphere.mote.pendiente.v1';
+
+/**
+ * Respaldo en memoria cuando no hay localStorage: navegacion privada, ajustes
+ * que bloquean el almacenamiento, o Node durante las pruebas. Sin esto, el
+ * mote reservado se perdia en silencio justo para quien mas cuesta recuperar.
+ */
+const almacen = (() => {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const sonda = '__atmosphere__';
+      localStorage.setItem(sonda, '1');
+      localStorage.removeItem(sonda);
+      return localStorage;
+    }
+  } catch { /* bloqueado: se usa el respaldo */ }
+  const mapa = new Map();
+  return {
+    getItem: (k) => (mapa.has(k) ? mapa.get(k) : null),
+    setItem: (k, v) => mapa.set(k, String(v)),
+    removeItem: (k) => mapa.delete(k),
+  };
+})();
+
+function guardarMotePendiente(mote) {
+  try {
+    if (mote) almacen.setItem(CLAVE_MOTE_PENDIENTE, String(mote));
+    else almacen.removeItem(CLAVE_MOTE_PENDIENTE);
+  } catch { /* sin almacenamiento */ }
+}
+
+function motePendiente() {
+  try { return almacen.getItem(CLAVE_MOTE_PENDIENTE) || null; } catch { return null; }
+}
+
+/**
+ * Quien ya esta dentro, para ensenarlo en la portada A QUIEN AUN NO TIENE
+ * CUENTA. Va contra la vista publica ranking_global y sin token, porque en ese
+ * momento no hay sesion: una portada de app social que no ensena a nadie no
+ * invita a entrar.
+ *
+ * Si el proyecto no le ha dado permiso de lectura al rol anonimo, esto falla y
+ * la portada lo asume sin romperse: es un adorno, no un requisito.
+ */
+async function vecindario(limite = 8) {
+  return llamarAPI('/rest/v1/rpc/vecindario', {
+    metodo: 'POST', autenticado: false, cuerpo: { n: Math.min(20, Math.max(1, limite)) },
+  });
+}
+
+/** Ranking por aura: quien mas contagia el habito. */
+async function rankingAura(limite = 30) {
+  return llamarAPI(
+    `/rest/v1/perfiles?publico=eq.true&aura=gt.0&select=id,nombre,mote,aura,puntos,nivel,co2e_total`
+    + `&order=aura.desc&limit=${Math.min(60, limite)}`);
+}
+
+/** Tiempo transcurrido en formato corto, para las tarjetas del muro. */
+function haceRato(iso) {
+  const seg = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (!Number.isFinite(seg) || seg < 0) return '';
+  if (seg < 60) return 'ahora';
+  if (seg < 3600) return `${Math.floor(seg / 60)} min`;
+  if (seg < 86400) return `${Math.floor(seg / 3600)} h`;
+  if (seg < 604800) return `${Math.floor(seg / 86400)} d`;
+  return new Date(iso).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+}
+
+  __exp.CUBO = CUBO;
+  __exp.LIMITE_MB = LIMITE_MB;
+  __exp.AURA = AURA;
+  __exp.auraDe = auraDe;
+  __exp.validarMote = validarMote;
+  __exp.extensionDe = extensionDe;
+  __exp.rutaMedio = rutaMedio;
+  __exp.urlMedio = urlMedio;
+  __exp.subirMedio = subirMedio;
+  __exp.diagnosticoAlmacen = diagnosticoAlmacen;
+  __exp.publicar = publicar;
+  __exp.borrarPublicacion = borrarPublicacion;
+  __exp.muro = muro;
+  __exp.virales = virales;
+  __exp.publicacionesDe = publicacionesDe;
+  __exp.espacioDe = espacioDe;
+  __exp.miEspacio = miEspacio;
+  __exp.REACCIONES = REACCIONES;
+  __exp.TIPOS_REACCION = TIPOS_REACCION;
+  __exp.reaccion = reaccion;
+  __exp.misReacciones = misReacciones;
+  __exp.misMeGusta = misMeGusta;
+  __exp.darMeGusta = darMeGusta;
+  __exp.cambiarReaccion = cambiarReaccion;
+  __exp.quitarMeGusta = quitarMeGusta;
+  __exp.aplicarReaccion = aplicarReaccion;
+  __exp.alternarMeGusta = alternarMeGusta;
+  __exp.reportar = reportar;
+  __exp.fijarMote = fijarMote;
+  __exp.subirAvatar = subirAvatar;
+  __exp.quitarAvatar = quitarAvatar;
+  __exp.guardarMotePendiente = guardarMotePendiente;
+  __exp.motePendiente = motePendiente;
+  __exp.vecindario = vecindario;
+  __exp.rankingAura = rankingAura;
+  __exp.haceRato = haceRato;
+});
+
 __def("src/ui/vistas/registrar.js", function (__exp, __req) {
 /** registrar.js — Catalogo de acciones y formulario de registro. */
 const { el, num, co2, toast, modal, esc, vacio } = __req("src/ui/componentes.js");
@@ -5925,6 +6989,8 @@ const { parsearTraza, metadatosTraza } = __req("src/core/gpx.js");
 const { procesarMedio, selectorMedio, guardarMedio, LIMITE_ARCHIVO_MB } = __req("src/ui/medios.js");
 const { capturar, hayCamaraEnApp, SEGUNDOS_CLIP } = __req("src/ui/camara.js");
 const { evaluarEvidencia, NIVELES_EVIDENCIA } = __req("src/core/evidencia.js");
+const api = __req("src/core/nube.js");
+const social = __req("src/core/social.js");
 
 let filtroCat = 'todas';
 let busqueda = '';
@@ -6139,6 +7205,7 @@ function abrirFormulario(a, ctx) {
             }
             cerrar();
             celebrar(res, a);
+            compartirSiProcede(ctx, res.registro, a, medio?.blob || null);
             ctx.refrescar();
           },
         }),
@@ -6418,6 +7485,39 @@ function construirMedios(a, estado, alAdjuntar) {
 
   pintar();
   return caja;
+}
+
+
+/**
+ * Comparte la accion recien registrada en el espacio de la persona, si lo tiene
+ * activado.
+ *
+ * VA DETRAS DEL REGISTRO, NO DENTRO. La accion ya esta guardada en el
+ * dispositivo cuando esto empieza: si falla la red, el permiso o la nube, no se
+ * pierde nada y el aviso es discreto. Un registro que fallara porque no hay
+ * cobertura seria un fallo mucho peor que una publicacion que no sale.
+ *
+ * Y hace falta sincronizar antes: la politica del servidor solo deja publicar
+ * sobre un registro que ya existe alli, precisamente para que nadie publique en
+ * nombre de acciones inventadas.
+ */
+async function compartirSiProcede(ctx, registro, accionInfo, blob) {
+  const estado = ctx.almacen.get();
+  if (!estado.perfil?.compartirAuto || !api.haySesion()) return;
+  try {
+    await api.sincronizar(estado.registros, (id) => accion(id)?.categoria || 'otras');
+    await social.publicar(registro, blob, {
+      categoria: accionInfo.categoria,
+      descripcion: registro.nota || '',
+    });
+    toast({ titulo: 'Compartido en tu espacio', icono: '🪪',
+      texto: blob ? 'Con tu prueba.' : 'Sin foto: puedes anadirla publicandola a mano.' });
+  } catch (e) {
+    // Duplicado = ya estaba publicada. No es un fallo que merezca avisar.
+    if (/duplicate|unique|23505/i.test(e.message || '')) return;
+    toast({ titulo: 'No se pudo compartir', tipo: 'alerta', icono: '⚠️',
+      texto: `${e.message} El registro si se guardo.` });
+  }
 }
 
   __exp.vistaRegistrar = vistaRegistrar;
@@ -8100,536 +9200,6 @@ function fila(k, v) {
   __exp.vistaRanking = vistaRanking;
 });
 
-__def("src/core/nube.js", function (__exp, __req) {
-/**
- * nube.js — Sincronizacion opcional con Supabase.
- *
- * ARQUITECTURA LOCAL-FIRST. El almacen del dispositivo sigue siendo la fuente
- * de verdad: la aplicacion funciona entera sin conexion y sin cuenta, igual que
- * antes. La nube es un espejo que se activa por decision explicita del usuario
- * y sirve para lo unico que no se puede hacer en local: comparar con personas
- * reales y no perder el historial al cambiar de dispositivo.
- *
- * SIN DEPENDENCIAS. Se habla directamente con la API REST de Supabase
- * (PostgREST + GoTrue) mediante fetch, en vez de instalar @supabase/supabase-js.
- * Son cuatro llamadas HTTP: la biblioteca pesaria mas que todo este modulo y
- * romperia el empaquetador de archivo unico.
- *
- * QUE SE ENVIA Y QUE NO:
- *   - Se envian registros de accion (accion, cantidad, impacto, puntos, fecha).
- *   - NO se envian fotos ni videos: las pruebas se quedan en el dispositivo.
- *   - NO se envian coordenadas ni trazas GPS.
- *   - Los registros son PRIVADOS en el servidor: al ranking solo llegan los
- *     totales agregados del perfil.
- */
-
-const CLAVE_CONFIG = 'atmosphere.nube.config.v1';
-const CLAVE_SESION = 'atmosphere.nube.sesion.v1';
-const CLAVE_SUBIDOS = 'atmosphere.nube.subidos.v1';
-
-const almacen = (() => {
-  try {
-    if (typeof localStorage !== 'undefined') return localStorage;
-  } catch { /* entorno sin almacenamiento */ }
-  const m = new Map();
-  return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, v), removeItem: (k) => m.delete(k) };
-})();
-
-const leerJSON = (clave, porDefecto) => {
-  try { const v = almacen.getItem(clave); return v ? JSON.parse(v) : porDefecto; } catch { return porDefecto; }
-};
-const guardarJSON = (clave, valor) => {
-  try { almacen.setItem(clave, JSON.stringify(valor)); return true; } catch { return false; }
-};
-
-class ErrorNube extends Error {
-  constructor(mensaje, codigo = 'desconocido') { super(mensaje); this.codigo = codigo; }
-}
-
-// ============================================================== configuracion
-
-/**
- * Proyecto al que se conecta la app si nadie configura otro.
- *
- * SIN ESTO NO HAY RED SOCIAL. Pedirle a cada persona que pegue una URL y una
- * clave antes de poder crear su cuenta convierte el primer paso en una tarea
- * de programador: la companera a la que le pasas el enlace se encuentra un
- * formulario de configuracion en vez de un "crear cuenta", y ahi se acaba.
- * Con esto, quien abre el enlace ya esta conectado y solo elige su mote.
- *
- * LA CLAVE PUBLICA VA AQUI A PROPOSITO. Supabase la llama "publishable" justo
- * porque esta pensada para vivir en el cliente: cualquiera que abra las
- * herramientas del navegador la vera en cualquier aplicacion que use Supabase.
- * Lo que protege los datos no es esconderla —seria imposible— sino las
- * politicas RLS, que es donde esta puesto el esfuerzo de este proyecto. La
- * clave SECRETA es otra cosa y nunca debe aparecer aqui; `esClaveSecreta()` la
- * rechaza si alguien la pega por error.
- *
- * Para apuntar a otro proyecto: cambiar estas dos lineas, o pegar los datos en
- * Perfil -> Nube, que tiene preferencia sobre este valor.
- */
-const NUBE_POR_DEFECTO = {
-  url: 'https://anrebwrrkubkkaaunyna.supabase.co',
-  anonKey: 'sb_publishable_mU-ALe_ht0qx84oWwvGEnQ_rBMzXRu0',
-};
-
-/**
- * Detecta una clave SECRETA pegada por error donde va la publica.
- *
- * Es el error mas grave posible en esta pantalla: la clave secreta salta TODAS
- * las politicas de seguridad por fila, asi que publicarla en un sitio estatico
- * daria control total de la base a cualquiera que abra el codigo fuente.
- * Se comprueban las dos formas que existen: el prefijo del formato nuevo y el
- * rol dentro del JWT del formato antiguo.
- */
-function esClaveSecreta(clave) {
-  const k = String(clave || '');
-  if (/^sb_secret_/i.test(k)) return 'formato nuevo (sb_secret_)';
-  const partes = k.split('.');
-  if (partes.length === 3) {
-    try {
-      const carga = JSON.parse(atob(partes[1].replace(/-/g, '+').replace(/_/g, '/')));
-      if (carga?.role === 'service_role') return 'JWT con rol service_role';
-    } catch { /* no es un JWT legible */ }
-  }
-  return null;
-}
-
-/**
- * Guarda la URL del proyecto y la clave publica.
- *
- * Se admiten los dos formatos que convivien: el nuevo `sb_publishable_...` y el
- * antiguo JWT `eyJ...` (la clave "anon"), que Supabase mantiene por
- * compatibilidad. Ambos son publicos por diseno: viven en el navegador y lo que
- * protege los datos son las politicas RLS, no ocultar la clave.
- */
-function configurar({ url, anonKey }) {
-  const u = String(url || '').trim().replace(/\/+$/, '');
-  let k = String(anonKey || '').trim().replace(/\s+/g, '');
-
-  if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(u)) {
-    throw new ErrorNube('La URL debe tener la forma https://xxxxx.supabase.co', 'url');
-  }
-
-  const secreta = esClaveSecreta(k);
-  if (secreta) {
-    throw new ErrorNube(
-      `Eso es una clave SECRETA (${secreta}), no la publica. Publicarla daria control total `
-      + 'de tu base de datos a cualquiera. Usa la "Publishable key" de Settings -> API Keys.',
-      'clave_secreta');
-  }
-
-  // Pegar la clave dos veces seguidas es un accidente frecuente al copiar.
-  if (k.length % 2 === 0 && k.length > 20 && k.slice(0, k.length / 2) === k.slice(k.length / 2)) {
-    k = k.slice(0, k.length / 2);
-  }
-
-  const esNueva = /^sb_publishable_[A-Za-z0-9_-]{10,}$/.test(k);
-  const esJWT = /^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(k);
-  if (!esNueva && !esJWT) {
-    throw new ErrorNube(
-      'La clave no tiene un formato reconocible. Debe empezar por "sb_publishable_" '
-      + '(formato actual) o por "eyJ" (clave anon antigua).',
-      'clave');
-  }
-
-  guardarJSON(CLAVE_CONFIG, { url: u, anonKey: k });
-  return { url: u, formato: esNueva ? 'publishable' : 'anon-jwt' };
-}
-
-/**
- * Configuracion vigente: la que haya guardado la persona y, si no hay, la del
- * proyecto por defecto. Nunca devuelve null salvo que se haya vaciado el
- * proyecto por defecto en el codigo.
- */
-function configuracion() {
-  const propia = leerJSON(CLAVE_CONFIG, null);
-  if (propia?.url && propia?.anonKey) return propia;
-  const { url, anonKey } = NUBE_POR_DEFECTO;
-  return url && anonKey ? { url, anonKey, porDefecto: true } : null;
-}
-
-/** Solo la configurada a mano. La pantalla de ajustes necesita distinguirlas. */
-function configuracionPropia() { return leerJSON(CLAVE_CONFIG, null); }
-
-function estaConfigurada() { return !!configuracion(); }
-function sesion() { return leerJSON(CLAVE_SESION, null); }
-function haySesion() { const s = sesion(); return !!(s && s.access_token && s.perfilId); }
-
-function desconectar() {
-  almacen.removeItem(CLAVE_SESION);
-  almacen.removeItem(CLAVE_SUBIDOS);
-}
-
-/**
- * Borra la sesion y la configuracion propia. Si hay proyecto por defecto, la
- * app vuelve a el en vez de quedarse sin nube.
- */
-function olvidarTodo() {
-  desconectar();
-  almacen.removeItem(CLAVE_CONFIG);
-}
-
-// ================================================================== transporte
-
-/**
- * Transporte compartido con la capa social (social.js). Se exporta para no
- * duplicar el manejo de cabeceras, errores y sesion caducada en dos modulos.
- */
-async function llamarAPI(ruta, opciones = {}) {
-  return llamar(ruta, opciones);
-}
-
-async function llamar(ruta, { metodo = 'GET', cuerpo = null, autenticado = true, cabeceras = {} } = {}) {
-  const cfg = configuracion();
-  if (!cfg) throw new ErrorNube('La nube no esta configurada.', 'sin_configurar');
-
-  const s = sesion();
-  // La clave publica va SOLO en la cabecera `apikey`. Las claves del formato
-  // nuevo no son JWT, asi que mandarlas tambien como `Authorization: Bearer`
-  // —cosa que hacen muchos clientes por defecto— haria que el servidor
-  // intentase interpretarlas como JWT y rechazase la peticion con "Invalid JWT".
-  // En `Authorization` solo viaja el token de sesion del usuario.
-  const h = {
-    apikey: cfg.anonKey,
-    'Content-Type': 'application/json',
-    ...cabeceras,
-  };
-  if (autenticado) {
-    if (!s?.access_token) throw new ErrorNube('No has iniciado sesion.', 'sin_sesion');
-    h.Authorization = `Bearer ${s.access_token}`;
-  }
-
-  let res;
-  try {
-    res = await fetch(`${cfg.url}${ruta}`, {
-      method: metodo,
-      headers: h,
-      body: cuerpo === null ? undefined : JSON.stringify(cuerpo),
-    });
-  } catch {
-    throw new ErrorNube('Sin conexion con el servidor.', 'red');
-  }
-
-  if (res.status === 401 || res.status === 403) {
-    throw new ErrorNube('La sesion ha caducado. Vuelve a entrar.', 'sesion_caducada');
-  }
-  const texto = await res.text();
-  let datos = null;
-  if (texto) { try { datos = JSON.parse(texto); } catch { datos = texto; } }
-
-  if (!res.ok) {
-    const msg = datos?.message || datos?.error_description || datos?.msg || `Error ${res.status}`;
-    throw new ErrorNube(msg, res.status >= 500 ? 'servidor' : 'peticion');
-  }
-  return datos;
-}
-
-// ==================================================================== cuenta
-
-/**
- * A donde debe volver el enlace del correo de confirmacion.
- *
- * Sin esto, GoTrue usa el "Site URL" del proyecto, que en uno recien creado es
- * http://localhost:3000: quien confirma desde el movil aterriza en el
- * localhost de SU propio telefono y ve ERR_CONNECTION_REFUSED. Mandando la
- * direccion real de esta pagina, el enlace vuelve a donde se pidio el alta,
- * sea github.io, un dominio propio o el servidor de desarrollo.
- *
- * Supabase solo respeta esta direccion si esta en la lista de "Redirect URLs"
- * del proyecto; si no lo esta, cae al Site URL. Por eso el arreglo completo
- * necesita las dos cosas, y db/INSTALACION.md lo explica.
- */
-function direccionDeVuelta() {
-  if (typeof location === 'undefined' || !location.protocol.startsWith('http')) return null;
-  return `${location.origin}${location.pathname}`;
-}
-
-async function crearCuenta(email, contrasena, { nombre = 'Guardian', pais = 'WW' } = {}) {
-  const vuelta = direccionDeVuelta();
-  const datos = await llamar(
-    `/auth/v1/signup${vuelta ? `?redirect_to=${encodeURIComponent(vuelta)}` : ''}`, {
-      metodo: 'POST', autenticado: false,
-      cuerpo: { email, password: contrasena, data: { nombre, pais } },
-    });
-  // Con confirmacion por correo activada, todavia no hay token.
-  if (datos?.access_token) {
-    guardarJSON(CLAVE_SESION, { access_token: datos.access_token, refresh_token: datos.refresh_token, perfilId: datos.user?.id, email });
-    return { ok: true, confirmacionPendiente: false };
-  }
-  return { ok: true, confirmacionPendiente: true };
-}
-
-/** El id del usuario va en el campo "sub" del JWT; se lee sin pedir nada. */
-function sujetoDeJWT(token) {
-  try {
-    const carga = JSON.parse(atob(String(token).split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
-    return carga?.sub || null;
-  } catch { return null; }
-}
-
-/**
- * Recoge la sesion que GoTrue deja en la URL al volver del correo.
- *
- * Al confirmar, Supabase redirige a la app con los tokens en el fragmento:
- *   #access_token=...&refresh_token=...&type=signup
- * Sin esto, la persona aterriza en la app SIN sesion despues de haber
- * confirmado, y tiene que escribir usuario y contrasena otra vez sin entender
- * por que. Tambien recoge el caso de error (enlace caducado o ya usado), que
- * llega igual por el fragmento.
- *
- * Limpia la URL despues, porque el fragmento es ademas el enrutador de la app
- * y un token ahi la mandaria a una ruta inexistente — y quedaria en el
- * historial del navegador.
- *
- * @returns {{estado:'sesion'|'error'|'nada', tipo?:string, mensaje?:string}}
- */
-function recogerSesionDeURL(loc = typeof location !== 'undefined' ? location : null) {
-  if (!loc) return { estado: 'nada' };
-  const bruto = String(loc.hash || '').replace(/^#/, '');
-  if (!bruto.includes('=')) return { estado: 'nada' };
-  const p = new URLSearchParams(bruto);
-
-  const limpiar = () => {
-    try {
-      history.replaceState(null, '', `${loc.pathname}${loc.search}`);
-    } catch { /* sin history: se queda la URL sucia, pero la sesion ya esta */ }
-  };
-
-  if (p.get('error') || p.get('error_description')) {
-    const desc = p.get('error_description') || p.get('error') || '';
-    limpiar();
-    return {
-      estado: 'error',
-      mensaje: /expired|invalid/i.test(desc)
-        ? 'Ese enlace de confirmacion ya caduco o se uso. Vuelve a entrar con tu correo y contrasena.'
-        : desc.replace(/\+/g, ' '),
-    };
-  }
-
-  const access = p.get('access_token');
-  const refresh = p.get('refresh_token');
-  if (!access) return { estado: 'nada' };
-
-  const perfilId = sujetoDeJWT(access);
-  if (!perfilId) return { estado: 'nada' };
-  guardarJSON(CLAVE_SESION, { access_token: access, refresh_token: refresh, perfilId, email: null });
-  limpiar();
-  return { estado: 'sesion', tipo: p.get('type') || 'signup' };
-}
-
-async function entrar(email, contrasena) {
-  const datos = await llamar('/auth/v1/token?grant_type=password', {
-    metodo: 'POST', autenticado: false,
-    cuerpo: { email, password: contrasena },
-  });
-  if (!datos?.access_token) throw new ErrorNube('Credenciales incorrectas.', 'credenciales');
-  guardarJSON(CLAVE_SESION, {
-    access_token: datos.access_token, refresh_token: datos.refresh_token,
-    perfilId: datos.user?.id, email,
-  });
-  return { perfilId: datos.user?.id };
-}
-
-// ============================================================ sincronizacion
-
-/**
- * Registros locales que aun no se han subido.
- * Funcion pura para poder probarla sin red.
- */
-function pendientesDeSubir(registrosLocales, idsSubidos) {
-  const ya = new Set(idsSubidos || []);
-  return (registrosLocales || []).filter((r) => r && r.id && !ya.has(r.id));
-}
-
-/**
- * Traduce un registro local a la fila que espera la base de datos.
- * Deja fuera a proposito la prueba grafica, la nota y cualquier coordenada:
- * al servidor solo va lo que necesita el ranking.
- */
-function aFilaRegistro(registro, categoria, perfilId) {
-  return {
-    id: registro.id,
-    perfil_id: perfilId,
-    accion_id: registro.accionId,
-    categoria: categoria || 'otras',
-    cantidad: Number(registro.cantidad) || 0,
-    unidad: registro.unidad || 'ud',
-    co2e: Number(registro.impacto?.co2e) || 0,
-    agua: Number(registro.impacto?.agua) || 0,
-    residuo: Number(registro.impacto?.residuo) || 0,
-    puntos: Math.max(0, Math.round(Number(registro.puntos) || 0)),
-    evidencia: registro.evidencia || null,
-    nivel_evidencia: registro.medio?.nivel || null,
-    fecha: registro.fecha,
-  };
-}
-
-/** Divide una lista en lotes, para no enviar miles de filas de golpe. */
-function enLotes(items, tamano = 100) {
-  const lotes = [];
-  for (let i = 0; i < items.length; i += tamano) lotes.push(items.slice(i, i + tamano));
-  return lotes;
-}
-
-function idsSubidos() { return leerJSON(CLAVE_SUBIDOS, []); }
-function marcarSubidos(ids) {
-  guardarJSON(CLAVE_SUBIDOS, [...new Set([...idsSubidos(), ...ids])]);
-}
-
-/**
- * Sube los registros pendientes y devuelve el perfil recalculado por el servidor.
- * @param {Array} registros registros locales
- * @param {(id:string)=>string} categoriaDe funcion que da la categoria de una accion
- */
-async function sincronizar(registros, categoriaDe) {
-  const s = sesion();
-  if (!s?.perfilId) throw new ErrorNube('No has iniciado sesion.', 'sin_sesion');
-
-  const pendientes = pendientesDeSubir(registros, idsSubidos());
-  let subidos = 0;
-  const rechazados = [];
-
-  for (const lote of enLotes(pendientes, 100)) {
-    const filas = lote.map((r) => aFilaRegistro(r, categoriaDe(r.accionId), s.perfilId));
-    try {
-      // merge-duplicates hace la subida idempotente: reenviar tras un corte de
-      // red no duplica nada, porque la clave primaria es el id del dispositivo.
-      await llamar('/rest/v1/registros', {
-        metodo: 'POST', cuerpo: filas,
-        cabeceras: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-      });
-      marcarSubidos(lote.map((r) => r.id));
-      subidos += lote.length;
-    } catch (e) {
-      rechazados.push({ n: lote.length, motivo: e.message });
-    }
-  }
-
-  const perfil = await miPerfil();
-  return { subidos, pendientes: pendientes.length - subidos, rechazados, perfil };
-}
-
-/** Perfil propio, con los totales que ha calculado el servidor. */
-async function miPerfil() {
-  const s = sesion();
-  const filas = await llamar(`/rest/v1/perfiles?id=eq.${s.perfilId}&select=*`);
-  return Array.isArray(filas) ? filas[0] || null : null;
-}
-
-/** Cambia los unicos campos que el cliente tiene permiso de escribir. */
-async function actualizarPerfil({ nombre, pais, publico }) {
-  const s = sesion();
-  const cambios = {};
-  if (nombre !== undefined) cambios.nombre = nombre;
-  if (pais !== undefined) cambios.pais = pais;
-  if (publico !== undefined) cambios.publico = publico;
-  if (!Object.keys(cambios).length) return null;
-  return llamar(`/rest/v1/perfiles?id=eq.${s.perfilId}`, {
-    metodo: 'PATCH', cuerpo: cambios, cabeceras: { Prefer: 'return=representation' },
-  });
-}
-
-// ======================================================================= social
-
-async function rankingGlobal(limite = 50) {
-  return llamar(`/rest/v1/ranking_global?select=*&limit=${Math.min(200, limite)}`);
-}
-
-async function impactoComunidad() {
-  const filas = await llamar('/rest/v1/impacto_comunidad?select=*');
-  return Array.isArray(filas) ? filas[0] || null : null;
-}
-
-async function misGrupos() {
-  const s = sesion();
-  return llamar(`/rest/v1/miembros?perfil_id=eq.${s.perfilId}&select=rol,unido,grupos(id,nombre,codigo,tipo)`);
-}
-
-async function rankingGrupo(grupoId) {
-  return llamar(`/rest/v1/ranking_grupos?grupo_id=eq.${grupoId}&select=*`);
-}
-
-/** Codigo de grupo legible: 6 caracteres sin los que se confunden (0/O, 1/I). */
-function generarCodigo(rnd = Math.random) {
-  const alfabeto = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let c = '';
-  for (let i = 0; i < 6; i++) c += alfabeto[Math.floor(rnd() * alfabeto.length)];
-  return c;
-}
-
-async function crearGrupo(nombre, tipo = 'clase') {
-  const s = sesion();
-  const codigo = generarCodigo();
-  const creado = await llamar('/rest/v1/grupos', {
-    metodo: 'POST', cuerpo: { nombre, codigo, tipo, creador: s.perfilId },
-    cabeceras: { Prefer: 'return=representation' },
-  });
-  const grupo = Array.isArray(creado) ? creado[0] : creado;
-  await llamar('/rest/v1/miembros', {
-    metodo: 'POST', cuerpo: { grupo_id: grupo.id, perfil_id: s.perfilId, rol: 'gestor' },
-    cabeceras: { Prefer: 'return=minimal' },
-  });
-  return grupo;
-}
-
-async function unirseAGrupo(codigo) {
-  return llamar('/rest/v1/rpc/unirse_por_codigo', {
-    metodo: 'POST', cuerpo: { p_codigo: String(codigo || '').toUpperCase().trim() },
-  });
-}
-
-/**
- * Mezcla el ranking del servidor con el perfil propio y calcula la posicion.
- * Pura: se puede probar sin red.
- */
-function situarEnRanking(filas, miId) {
-  const tabla = [...(filas || [])]
-    .sort((a, b) => (b.puntos || 0) - (a.puntos || 0))
-    .map((f, i) => ({ ...f, posicion: i + 1, esUsuario: f.id === miId }));
-  const yo = tabla.find((f) => f.esUsuario) || null;
-  const siguiente = yo && yo.posicion > 1 ? tabla[yo.posicion - 2] : null;
-  return {
-    tabla,
-    posicion: yo?.posicion ?? null,
-    total: tabla.length,
-    faltanParaSubir: siguiente && yo ? Math.max(0, (siguiente.puntos || 0) - (yo.puntos || 0) + 1) : 0,
-  };
-}
-
-  __exp.ErrorNube = ErrorNube;
-  __exp.NUBE_POR_DEFECTO = NUBE_POR_DEFECTO;
-  __exp.esClaveSecreta = esClaveSecreta;
-  __exp.configurar = configurar;
-  __exp.configuracion = configuracion;
-  __exp.configuracionPropia = configuracionPropia;
-  __exp.estaConfigurada = estaConfigurada;
-  __exp.sesion = sesion;
-  __exp.haySesion = haySesion;
-  __exp.desconectar = desconectar;
-  __exp.olvidarTodo = olvidarTodo;
-  __exp.llamarAPI = llamarAPI;
-  __exp.direccionDeVuelta = direccionDeVuelta;
-  __exp.crearCuenta = crearCuenta;
-  __exp.sujetoDeJWT = sujetoDeJWT;
-  __exp.recogerSesionDeURL = recogerSesionDeURL;
-  __exp.entrar = entrar;
-  __exp.pendientesDeSubir = pendientesDeSubir;
-  __exp.aFilaRegistro = aFilaRegistro;
-  __exp.enLotes = enLotes;
-  __exp.sincronizar = sincronizar;
-  __exp.miPerfil = miPerfil;
-  __exp.actualizarPerfil = actualizarPerfil;
-  __exp.rankingGlobal = rankingGlobal;
-  __exp.impactoComunidad = impactoComunidad;
-  __exp.misGrupos = misGrupos;
-  __exp.rankingGrupo = rankingGrupo;
-  __exp.generarCodigo = generarCodigo;
-  __exp.crearGrupo = crearGrupo;
-  __exp.unirseAGrupo = unirseAGrupo;
-  __exp.situarEnRanking = situarEnRanking;
-});
-
 __def("src/ui/vistas/nube.js", function (__exp, __req) {
 /** nube.js — Sincronizacion opcional, grupos y ranking con personas reales. */
 const { el, num, co2, litros, toast, modal, tarjetaMetrica, vacio, esc } = __req("src/ui/componentes.js");
@@ -8943,481 +9513,6 @@ function dialogoUnirse(repintar) {
   __exp.vistaNube = vistaNube;
 });
 
-__def("src/core/social.js", function (__exp, __req) {
-/**
- * social.js — Comunidad: publicaciones, me gusta y aura.
- *
- * DOS MONEDAS DISTINTAS, A PROPOSITO:
- *   puntos = impacto fisico medido (kg CO2e, litros, residuo)
- *   aura   = reconocimiento de la comunidad
- *
- * Separarlas evita el peor riesgo de una app ambiental con capa social: que un
- * video gracioso valga mas que plantar un arbol. Los puntos siguen saliendo
- * solo de la fisica; el aura mide otra cosa —contagiar el habito— y se muestra
- * aparte. Nunca se suman.
- *
- * El aura tampoco la escribe el cliente: la deriva el servidor de las
- * publicaciones y los me gusta, con los mismos candados que los puntos. Ni
- * auto-me-gusta, ni me gusta repetido, ni publicar sobre un registro ajeno.
- *
- * PRIVACIDAD: publicar es una decision explicita POR ACCION. La promesa de que
- * las pruebas no salen del dispositivo sigue en pie para todo lo demas; solo
- * viaja el medio de la accion concreta que la persona elige compartir.
- */
-const { configuracion, sesion, llamarAPI, ErrorNube } = __req("src/core/nube.js");
-
-/** Cubo de Supabase Storage donde viven los medios publicados. */
-const CUBO = 'evidencias';
-
-/** Tamano maximo de un medio publicado. Un clip corto cabe de sobra. */
-const LIMITE_MB = 25;
-
-/** Puntuacion de aura, identica a la del servidor (solo para previsualizar). */
-const AURA = Object.freeze({
-  porPublicar: 8,
-  porMeGusta: 2,
-  porEvidenciaVerificada: 5,
-});
-
-const VERIFICADOS = ['fechada', 'situada', 'video'];
-
-/** Aura que produciria una publicacion. El valor real lo calcula Postgres. */
-function auraDe({ likes = 0, nivelEvidencia = null } = {}) {
-  return AURA.porPublicar
-    + AURA.porMeGusta * Math.max(0, likes)
-    + (VERIFICADOS.includes(nivelEvidencia) ? AURA.porEvidenciaVerificada : 0);
-}
-
-/**
- * Valida un mote antes de gastar una peticion.
- * Minusculas, digitos y guion bajo; de 3 a 15. Sin mayusculas ni acentos para
- * que sea inequivoco al dictarlo y no existan dos motes visualmente iguales.
- */
-function validarMote(mote) {
-  const m = String(mote || '').trim().toLowerCase();
-  if (!m) return { ok: false, motivo: 'Escribe un mote.' };
-  if (m.length < 3) return { ok: false, motivo: 'Mínimo 3 caracteres.' };
-  if (m.length > 15) return { ok: false, motivo: 'Máximo 15 caracteres.' };
-  if (!/^[a-z0-9_]+$/.test(m)) {
-    return { ok: false, motivo: 'Solo letras sin acentos, números y guion bajo.' };
-  }
-  return { ok: true, mote: m };
-}
-
-/** Extension del archivo a partir de su tipo MIME. */
-function extensionDe(tipoMime) {
-  const mapa = {
-    'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp',
-    'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov',
-  };
-  return mapa[String(tipoMime || '').toLowerCase()] || (String(tipoMime).startsWith('video/') ? 'mp4' : 'jpg');
-}
-
-/** Ruta dentro del cubo: cada quien escribe solo en su carpeta (su uuid). */
-function rutaMedio(perfilId, tipoMime) {
-  const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-  return `${perfilId}/${id}.${extensionDe(tipoMime)}`;
-}
-
-/** URL publica de un medio ya subido. */
-function urlMedio(ruta) {
-  const cfg = configuracion();
-  if (!cfg || !ruta) return null;
-  return `${cfg.url}/storage/v1/object/public/${CUBO}/${encodeURI(ruta)}`;
-}
-
-/**
- * Sube un medio al almacen. No pasa por llamarAPI porque el cuerpo es binario
- * y la cabecera Content-Type debe ser la del propio archivo, no JSON.
- */
-async function subirMedio(blob) {
-  const cfg = configuracion();
-  const s = sesion();
-  if (!cfg) throw new ErrorNube('La nube no esta configurada.', 'sin_configurar');
-  if (!s?.access_token) throw new ErrorNube('No has iniciado sesion.', 'sin_sesion');
-  if (!blob || !blob.size) throw new ErrorNube('No hay archivo que subir.', 'entrada');
-  if (blob.size > LIMITE_MB * 1048576) {
-    throw new ErrorNube(`El archivo pesa ${(blob.size / 1048576).toFixed(1)} MB y el limite es ${LIMITE_MB} MB.`, 'tamano');
-  }
-
-  const ruta = rutaMedio(s.perfilId, blob.type);
-  let res;
-  try {
-    res = await fetch(`${cfg.url}/storage/v1/object/${CUBO}/${ruta}`, {
-      method: 'POST',
-      headers: {
-        apikey: cfg.anonKey,
-        Authorization: `Bearer ${s.access_token}`,
-        'Content-Type': blob.type || 'application/octet-stream',
-        'x-upsert': 'false',
-      },
-      body: blob,
-    });
-  } catch {
-    throw new ErrorNube('No se pudo subir el archivo.', 'red');
-  }
-  if (!res.ok) {
-    const texto = await res.text().catch(() => '');
-    throw new ErrorNube(diagnosticoAlmacen(res.status, texto), 'almacen');
-  }
-  return ruta;
-}
-
-/**
- * Traduce el rechazo del almacen a algo que se pueda arreglar.
- *
- * Los dos fallos habituales no son del codigo sino de la instalacion, porque
- * el guion de la base de datos omite el cubo o sus politicas cuando el rol del
- * editor SQL no es dueno de storage.objects. Sin este mensaje, lo que ve la
- * persona es un numero y un texto en ingles del servidor.
- *
- * @param {number} estado codigo HTTP
- * @param {string} texto cuerpo de la respuesta
- * @returns {string} mensaje con el siguiente paso concreto
- */
-function diagnosticoAlmacen(estado, texto) {
-  const t = String(texto || '').toLowerCase();
-  if (estado === 404 || t.includes('bucket not found')) {
-    return 'Falta el cubo "evidencias" en tu proyecto. Crealo en Supabase: '
-         + 'Storage -> New bucket -> nombre "evidencias", marca Public bucket.';
-  }
-  if (estado === 403 || estado === 400 || t.includes('row-level security') || t.includes('unauthorized')) {
-    return 'El almacen existe pero le faltan las politicas de acceso. '
-         + 'Ponlas en Supabase: Storage -> Policies sobre el cubo "evidencias" '
-         + '(estan copiadas en db/INSTALACION.md).';
-  }
-  return `El almacen rechazo el archivo (${estado}). ${String(texto || '').slice(0, 120)}`;
-}
-
-/**
- * Publica una accion en el muro.
- * @param {object} registro registro local ya sincronizado
- * @param {Blob} blob foto o video de la accion
- * @param {{descripcion?:string, categoria?:string}} extra
- */
-async function publicar(registro, blob, { descripcion = '', categoria = 'otras' } = {}) {
-  const s = sesion();
-  if (!s?.perfilId) throw new ErrorNube('No has iniciado sesion.', 'sin_sesion');
-
-  const ruta = await subirMedio(blob);
-  const fila = {
-    perfil_id: s.perfilId,
-    registro_id: registro.id,
-    accion_id: registro.accionId,
-    categoria,
-    descripcion: String(descripcion || '').slice(0, 200),
-    ruta_medio: ruta,
-    tipo_medio: (blob.type || '').startsWith('video/') ? 'video' : 'foto',
-    nivel_evidencia: registro.medio?.nivel || null,
-    co2e: Number(registro.impacto?.co2e) || 0,
-    puntos: Math.max(0, Math.round(Number(registro.puntos) || 0)),
-  };
-  const creado = await llamarAPI('/rest/v1/publicaciones', {
-    metodo: 'POST', cuerpo: fila, cabeceras: { Prefer: 'return=representation' },
-  });
-  return Array.isArray(creado) ? creado[0] : creado;
-}
-
-async function borrarPublicacion(id) {
-  return llamarAPI(`/rest/v1/publicaciones?id=eq.${id}`, { metodo: 'DELETE' });
-}
-
-/** Muro: lo mas reciente de toda la comunidad. */
-async function muro(limite = 30, desde = 0) {
-  return llamarAPI(`/rest/v1/muro?select=*&limit=${Math.min(60, limite)}&offset=${Math.max(0, desde)}`);
-}
-
-/** Virales: lo mas gustado de los ultimos siete dias. */
-async function virales() {
-  return llamarAPI('/rest/v1/virales?select=*');
-}
-
-/** Publicaciones de un perfil concreto, para su pagina publica. */
-async function publicacionesDe(perfilId) {
-  return llamarAPI(`/rest/v1/muro?perfil_id=eq.${perfilId}&select=*`);
-}
-
-/** Identificadores de las publicaciones a las que YA di me gusta. */
-/**
- * Reacciones posibles.
- *
- * TODAS VALEN LO MISMO EN AURA, y no es un descuido. Si el corazon puntuara mas
- * que el me gusta, la gente elegiria por lo que suma y no por lo que siente, y
- * el dato dejaria de decir nada sobre la publicacion. Lo que cambia es el
- * matiz que se expresa, no el precio.
- */
-const REACCIONES = Object.freeze([
-  { tipo: 'me_gusta',   icono: '👍', etiqueta: 'Me gusta' },
-  { tipo: 'me_encanta', icono: '😍', etiqueta: 'Me encanta' },
-  { tipo: 'corazon',    icono: '❤️', etiqueta: 'Corazón' },
-  { tipo: 'aplauso',    icono: '👏', etiqueta: 'Bien hecho' },
-  { tipo: 'inspira',    icono: '🌱', etiqueta: 'Me inspira' },
-]);
-
-const TIPOS_REACCION = Object.freeze(REACCIONES.map((r) => r.tipo));
-
-/** Datos de una reaccion por su tipo, con respaldo si llega uno desconocido. */
-function reaccion(tipo) {
-  return REACCIONES.find((r) => r.tipo === tipo) || REACCIONES[0];
-}
-
-/** Mis reacciones, como mapa publicacion -> tipo. */
-async function misReacciones() {
-  const s = sesion();
-  if (!s?.perfilId) return new Map();
-  const filas = await llamarAPI(
-    `/rest/v1/megusta?perfil_id=eq.${s.perfilId}&select=publicacion_id,tipo`);
-  return new Map((filas || []).map((f) => [f.publicacion_id, f.tipo || 'me_gusta']));
-}
-
-/** Compatibilidad: solo el conjunto de publicaciones a las que reaccione. */
-async function misMeGusta() {
-  return new Set((await misReacciones()).keys());
-}
-
-async function darMeGusta(publicacionId, tipo = 'me_gusta') {
-  const s = sesion();
-  return llamarAPI('/rest/v1/megusta', {
-    metodo: 'POST',
-    cuerpo: { publicacion_id: publicacionId, perfil_id: s.perfilId, tipo: normalizar(tipo) },
-    cabeceras: { Prefer: 'return=minimal' },
-  });
-}
-
-/** Cambia el matiz sin quitar y volver a poner: el aura no parpadea. */
-async function cambiarReaccion(publicacionId, tipo) {
-  const s = sesion();
-  return llamarAPI(
-    `/rest/v1/megusta?publicacion_id=eq.${publicacionId}&perfil_id=eq.${s.perfilId}`, {
-      metodo: 'PATCH', cuerpo: { tipo: normalizar(tipo) },
-      cabeceras: { Prefer: 'return=minimal' },
-    });
-}
-
-async function quitarMeGusta(publicacionId) {
-  const s = sesion();
-  return llamarAPI(`/rest/v1/megusta?publicacion_id=eq.${publicacionId}&perfil_id=eq.${s.perfilId}`,
-    { metodo: 'DELETE' });
-}
-
-function normalizar(tipo) {
-  return TIPOS_REACCION.includes(tipo) ? tipo : 'me_gusta';
-}
-
-/**
- * Aplica una reaccion y devuelve el tipo resultante, o null si se retiro.
- *
- * Pulsar la misma que ya tenias la quita; pulsar otra la cambia. Es el gesto
- * que la gente ya conoce, y evita el estado raro de "reaccione dos veces".
- *
- * @param {string} publicacionId
- * @param {string|null} actual la reaccion que ya tenias, o null
- * @param {string} elegida
- * @returns {Promise<string|null>}
- */
-async function aplicarReaccion(publicacionId, actual, elegida) {
-  const nueva = normalizar(elegida);
-  if (actual === nueva) { await quitarMeGusta(publicacionId); return null; }
-  if (actual) { await cambiarReaccion(publicacionId, nueva); return nueva; }
-  await darMeGusta(publicacionId, nueva);
-  return nueva;
-}
-
-/** Compatibilidad con el alternar simple de antes. */
-async function alternarMeGusta(publicacionId, teGusta) {
-  return (await aplicarReaccion(publicacionId, teGusta ? 'me_gusta' : null, 'me_gusta')) !== null;
-}
-
-async function reportar(publicacionId, motivo = 'inapropiado') {
-  const s = sesion();
-  return llamarAPI('/rest/v1/reportes', {
-    metodo: 'POST',
-    cuerpo: { publicacion_id: publicacionId, perfil_id: s.perfilId, motivo },
-    cabeceras: { Prefer: 'return=minimal' },
-  });
-}
-
-/** Fija el mote publico. El servidor rechaza duplicados con un error propio. */
-async function fijarMote(mote) {
-  const v = validarMote(mote);
-  if (!v.ok) throw new ErrorNube(v.motivo, 'mote');
-  const s = sesion();
-  try {
-    await llamarAPI(`/rest/v1/perfiles?id=eq.${s.perfilId}`, {
-      metodo: 'PATCH', cuerpo: { mote: v.mote }, cabeceras: { Prefer: 'return=minimal' },
-    });
-  } catch (e) {
-    if (/duplicate|unique|23505/i.test(e.message)) {
-      throw new ErrorNube(`El mote "${v.mote}" ya esta cogido. Prueba otro.`, 'mote_ocupado');
-    }
-    throw e;
-  }
-  return v.mote;
-}
-
-/**
- * Sube la foto de perfil y la deja apuntada en el perfil.
- *
- * Va al mismo cubo que las pruebas y bajo la carpeta del propio perfil, asi que
- * la reutiliza la politica que ya existe: cada quien escribe solo en lo suyo.
- * En la fila se guarda la RUTA, no la imagen: meter la foto en el perfil la
- * haria viajar entera en cada consulta del ranking y del muro.
- *
- * @param {Blob} blob imagen ya reescalada
- * @returns {Promise<string>} ruta dentro del cubo
- */
-async function subirAvatar(blob) {
-  const s = sesion();
-  if (!s?.perfilId) throw new ErrorNube('No has iniciado sesion.', 'sin_sesion');
-  const anterior = (await llamarAPI(
-    `/rest/v1/perfiles?id=eq.${s.perfilId}&select=avatar`))?.[0]?.avatar || null;
-
-  const ruta = await subirMedio(blob);
-  await llamarAPI(`/rest/v1/perfiles?id=eq.${s.perfilId}`, {
-    metodo: 'PATCH', cuerpo: { avatar: ruta }, cabeceras: { Prefer: 'return=minimal' },
-  });
-
-  // La anterior se borra DESPUES de apuntar la nueva. Al reves, un corte de red
-  // en medio dejaria el perfil apuntando a un archivo que ya no existe.
-  if (anterior && anterior !== ruta) await borrarMedioAlmacen(anterior).catch(() => {});
-  return ruta;
-}
-
-/** Quita la foto del perfil y borra el archivo. */
-async function quitarAvatar() {
-  const s = sesion();
-  if (!s?.perfilId) throw new ErrorNube('No has iniciado sesion.', 'sin_sesion');
-  const anterior = (await llamarAPI(
-    `/rest/v1/perfiles?id=eq.${s.perfilId}&select=avatar`))?.[0]?.avatar || null;
-  await llamarAPI(`/rest/v1/perfiles?id=eq.${s.perfilId}`, {
-    metodo: 'PATCH', cuerpo: { avatar: null }, cabeceras: { Prefer: 'return=minimal' },
-  });
-  if (anterior) await borrarMedioAlmacen(anterior).catch(() => {});
-}
-
-/** Borra un archivo del cubo. La politica solo deja borrar lo propio. */
-async function borrarMedioAlmacen(ruta) {
-  const cfg = configuracion();
-  const s = sesion();
-  if (!cfg || !s?.access_token || !ruta) return;
-  await fetch(`${cfg.url}/storage/v1/object/${CUBO}/${encodeURI(ruta)}`, {
-    method: 'DELETE',
-    headers: { apikey: cfg.anonKey, Authorization: `Bearer ${s.access_token}` },
-  });
-}
-
-/**
- * Mote reservado durante un alta que quedo pendiente de confirmar el correo.
- *
- * Cuando el proyecto exige confirmacion, el alta no devuelve sesion y todavia
- * no hay perfil al que ponerle el mote. Guardarlo aqui evita que la persona
- * tenga que acordarse de volver a elegirlo tres dias despues, cuando por fin
- * abra el correo.
- */
-const CLAVE_MOTE_PENDIENTE = 'atmosphere.mote.pendiente.v1';
-
-/**
- * Respaldo en memoria cuando no hay localStorage: navegacion privada, ajustes
- * que bloquean el almacenamiento, o Node durante las pruebas. Sin esto, el
- * mote reservado se perdia en silencio justo para quien mas cuesta recuperar.
- */
-const almacen = (() => {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      const sonda = '__atmosphere__';
-      localStorage.setItem(sonda, '1');
-      localStorage.removeItem(sonda);
-      return localStorage;
-    }
-  } catch { /* bloqueado: se usa el respaldo */ }
-  const mapa = new Map();
-  return {
-    getItem: (k) => (mapa.has(k) ? mapa.get(k) : null),
-    setItem: (k, v) => mapa.set(k, String(v)),
-    removeItem: (k) => mapa.delete(k),
-  };
-})();
-
-function guardarMotePendiente(mote) {
-  try {
-    if (mote) almacen.setItem(CLAVE_MOTE_PENDIENTE, String(mote));
-    else almacen.removeItem(CLAVE_MOTE_PENDIENTE);
-  } catch { /* sin almacenamiento */ }
-}
-
-function motePendiente() {
-  try { return almacen.getItem(CLAVE_MOTE_PENDIENTE) || null; } catch { return null; }
-}
-
-/**
- * Quien ya esta dentro, para ensenarlo en la portada A QUIEN AUN NO TIENE
- * CUENTA. Va contra la vista publica ranking_global y sin token, porque en ese
- * momento no hay sesion: una portada de app social que no ensena a nadie no
- * invita a entrar.
- *
- * Si el proyecto no le ha dado permiso de lectura al rol anonimo, esto falla y
- * la portada lo asume sin romperse: es un adorno, no un requisito.
- */
-async function vecindario(limite = 8) {
-  return llamarAPI('/rest/v1/rpc/vecindario', {
-    metodo: 'POST', autenticado: false, cuerpo: { n: Math.min(20, Math.max(1, limite)) },
-  });
-}
-
-/** Ranking por aura: quien mas contagia el habito. */
-async function rankingAura(limite = 30) {
-  return llamarAPI(
-    `/rest/v1/perfiles?publico=eq.true&aura=gt.0&select=id,nombre,mote,aura,puntos,nivel,co2e_total`
-    + `&order=aura.desc&limit=${Math.min(60, limite)}`);
-}
-
-/** Tiempo transcurrido en formato corto, para las tarjetas del muro. */
-function haceRato(iso) {
-  const seg = (Date.now() - new Date(iso).getTime()) / 1000;
-  if (!Number.isFinite(seg) || seg < 0) return '';
-  if (seg < 60) return 'ahora';
-  if (seg < 3600) return `${Math.floor(seg / 60)} min`;
-  if (seg < 86400) return `${Math.floor(seg / 3600)} h`;
-  if (seg < 604800) return `${Math.floor(seg / 86400)} d`;
-  return new Date(iso).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
-}
-
-  __exp.CUBO = CUBO;
-  __exp.LIMITE_MB = LIMITE_MB;
-  __exp.AURA = AURA;
-  __exp.auraDe = auraDe;
-  __exp.validarMote = validarMote;
-  __exp.extensionDe = extensionDe;
-  __exp.rutaMedio = rutaMedio;
-  __exp.urlMedio = urlMedio;
-  __exp.subirMedio = subirMedio;
-  __exp.diagnosticoAlmacen = diagnosticoAlmacen;
-  __exp.publicar = publicar;
-  __exp.borrarPublicacion = borrarPublicacion;
-  __exp.muro = muro;
-  __exp.virales = virales;
-  __exp.publicacionesDe = publicacionesDe;
-  __exp.REACCIONES = REACCIONES;
-  __exp.TIPOS_REACCION = TIPOS_REACCION;
-  __exp.reaccion = reaccion;
-  __exp.misReacciones = misReacciones;
-  __exp.misMeGusta = misMeGusta;
-  __exp.darMeGusta = darMeGusta;
-  __exp.cambiarReaccion = cambiarReaccion;
-  __exp.quitarMeGusta = quitarMeGusta;
-  __exp.aplicarReaccion = aplicarReaccion;
-  __exp.alternarMeGusta = alternarMeGusta;
-  __exp.reportar = reportar;
-  __exp.fijarMote = fijarMote;
-  __exp.subirAvatar = subirAvatar;
-  __exp.quitarAvatar = quitarAvatar;
-  __exp.guardarMotePendiente = guardarMotePendiente;
-  __exp.motePendiente = motePendiente;
-  __exp.vecindario = vecindario;
-  __exp.rankingAura = rankingAura;
-  __exp.haceRato = haceRato;
-});
-
 __def("src/ui/vistas/comunidad.js", function (__exp, __req) {
 /** comunidad.js — Muro de buenas acciones: clips cortos, me gusta y aura. */
 const { el, num, co2, toast, modal, vacio, esc, tarjetaMetrica, logoMutuu, avatar } = __req("src/ui/componentes.js");
@@ -9640,9 +9735,16 @@ function tarjetaPublicacion(p, reaccionMia, ctx, repintar) {
     el('div', { estilo: 'padding:13px' }, [
       el('div', { clase: 'fila entre', estilo: 'margin-bottom:7px' }, [
         el('div', { clase: 'fila', estilo: 'gap:7px;min-width:0' }, [
-          avatar({ url: social.urlMedio(p.autor_avatar), nombre: p.autor_nombre, mote: p.autor_mote }, 26),
-          el('strong', { estilo: 'font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',
-            texto: p.autor_mote ? `@${p.autor_mote}` : (p.autor_nombre || 'Alguien') }),
+          el('button', {
+            clase: 'enlace-autor',
+            title: p.autor_mote ? `Ver el espacio de @${p.autor_mote}` : 'Sin mote todavia',
+            disabled: p.autor_mote ? null : '',
+            onclick: () => p.autor_mote && ctx.ir('espacio', p.autor_mote),
+          }, [
+            avatar({ url: social.urlMedio(p.autor_avatar), nombre: p.autor_nombre, mote: p.autor_mote }, 26),
+            el('strong', { estilo: 'font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',
+              texto: p.autor_mote ? `@${p.autor_mote}` : (p.autor_nombre || 'Alguien') }),
+          ]),
           el('span', { clase: 'pastilla', estilo: 'background:rgba(192,132,252,.16);color:var(--morado)',
             texto: `✨ ${num(p.autor_aura ?? 0)}` }),
         ]),
@@ -9784,6 +9886,7 @@ function dialogoPublicar(ctx, repintar) {
 }
 
   __exp.vistaComunidad = vistaComunidad;
+  __exp.tarjetaPublicacion = tarjetaPublicacion;
 });
 
 __def("src/data/indicadores.js", function (__exp, __req) {
@@ -10184,6 +10287,7 @@ function vistaPerfil(ctx) {
         el('label', { clase: 'campo' }, ['Nombre', nombre]),
         el('label', { clase: 'campo' }, ['Pais (determina el mix electrico de tus calculos)', selPais]),
         el('label', { clase: 'campo' }, ['Tema visual', selTema]),
+        interruptorCompartir(ctx),
         el('button', {
           clase: 'btn primario', texto: 'Guardar cambios',
           onclick: () => {
@@ -10447,6 +10551,42 @@ function seccionFoto(ctx) {
     }).catch(() => {});
   }
   return caja;
+}
+
+
+/**
+ * Interruptor de compartir automatico.
+ *
+ * APAGADO POR DEFECTO, y esto no es negociable en una app que promete que los
+ * registros son privados. Encenderlo es una decision consciente y reversible:
+ * lo que se compartio antes sigue compartido, pero se puede borrar
+ * publicacion por publicacion desde el espacio.
+ */
+function interruptorCompartir(ctx) {
+  const estado = ctx.almacen.get();
+  const casilla = el('input', { type: 'checkbox' });
+  casilla.checked = !!estado.perfil.compartirAuto;
+  casilla.addEventListener('change', () => {
+    ctx.almacen.actualizarPerfil({ compartirAuto: casilla.checked });
+    toast(casilla.checked
+      ? { titulo: 'Compartir activado', icono: '🪪',
+          texto: 'Cada accion que registres aparecera en tu espacio.' }
+      : { titulo: 'Compartir desactivado', icono: '🔒',
+          texto: 'Lo ya publicado sigue ahi; puedes borrarlo desde tu espacio.' });
+  });
+
+  return el('div', { clase: 'campo' }, [
+    el('label', { clase: 'fila', estilo: 'gap:9px;cursor:pointer;align-items:flex-start' }, [
+      casilla,
+      el('div', {}, [
+        el('div', { estilo: 'font-weight:600;color:var(--texto)',
+          texto: 'Compartir mis acciones en mi espacio' }),
+        el('div', { clase: 'mini', estilo: 'margin-top:2px' },
+          ['Cada accion que registres se publica sola y otras personas pueden verla y reaccionar. '
+           + 'Sin esto, tus registros siguen siendo privados y solo se publica lo que elijas a mano.']),
+      ]),
+    ]),
+  ]);
 }
 
   __exp.vistaPerfil = vistaPerfil;
@@ -10825,6 +10965,122 @@ function leerVisto() {
   __exp.marcarVisto = marcarVisto;
 });
 
+__def("src/ui/vistas/espacio.js", function (__exp, __req) {
+/**
+ * espacio.js — El espacio de una persona: su ficha y todo lo que ha publicado.
+ *
+ * Es la pagina a la que se llega pulsando un mote en el muro, y la que cada
+ * quien puede repartir como suya. Reutiliza la misma tarjeta que el muro a
+ * proposito: dos tarjetas distintas para lo mismo acaban divergiendo, y las
+ * reacciones tienen que funcionar igual aqui que alli.
+ */
+const { el, num, co2, toast, vacio, avatar, tarjetaMetrica } = __req("src/ui/componentes.js");
+const social = __req("src/core/social.js");
+const api = __req("src/core/nube.js");
+const { tarjetaPublicacion } = __req("src/ui/vistas/comunidad.js");
+const { progresion } = __req("src/core/nivel.js");
+
+function vistaEspacio(ctx, mote = null) {
+  // El mote viene de la ruta (#espacio/javi_eco), asi que cada espacio tiene
+  // URL propia y se puede repartir. Sin argumento, es el mio.
+  const motePedido = mote ? String(mote).replace(/^@/, '').toLowerCase() : null;
+
+  const raiz = el('div');
+  const cuerpo = el('div');
+  raiz.appendChild(cuerpo);
+
+  const pintar = async () => {
+    cuerpo.innerHTML = '';
+    if (!api.haySesion()) {
+      cuerpo.appendChild(el('div', { clase: 'tarjeta centrado' }, [
+        el('h2', { texto: 'Los espacios necesitan cuenta' }),
+        el('p', { clase: 'mini', estilo: 'margin:6px 0 15px' },
+          ['Tu espacio guarda lo que publicas y otras personas pueden verlo y reaccionar.']),
+        el('button', { clase: 'btn primario', texto: '✨ Crear mi cuenta', onclick: () => ctx.ir('bienvenida') }),
+      ]));
+      return;
+    }
+
+    const cargando = el('div', { clase: 'tarjeta pulso', texto: 'Cargando el espacio...' });
+    cuerpo.appendChild(cargando);
+
+    let datos;
+    try {
+      datos = motePedido ? await social.espacioDe(motePedido) : await social.miEspacio();
+    } catch (e) {
+      cargando.remove();
+      cuerpo.appendChild(el('div', { clase: 'tarjeta centrado' }, [
+        el('div', { estilo: 'font-size:38px', texto: '🔍' }),
+        el('h2', { estilo: 'margin:9px 0 5px', texto: 'Espacio no encontrado' }),
+        el('p', { clase: 'mini', estilo: 'margin-bottom:14px', texto: e.message }),
+        el('button', { clase: 'btn', texto: '← Volver a la comunidad', onclick: () => ctx.ir('comunidad') }),
+      ]));
+      return;
+    }
+    cargando.remove();
+
+    const mio = datos.esMio || datos.ficha.id === api.sesion()?.perfilId;
+    const reacciones = mio ? new Map() : (await social.misReacciones().catch(() => new Map()));
+    pintarEspacio(cuerpo, datos, mio, ctx, pintar, reacciones);
+  };
+
+  pintar();
+  return raiz;
+}
+
+function pintarEspacio(cuerpo, { ficha, publicaciones }, mio, ctx, repintar, reacciones) {
+  const prog = progresion(ficha.puntos || 0);
+
+  // ------------------------------------------------------------------ ficha
+  cuerpo.appendChild(el('div', { clase: 'tarjeta seccion ficha-espacio' }, [
+    (() => {
+      const cara = avatar({ url: social.urlMedio(ficha.avatar), nombre: ficha.nombre, mote: ficha.mote }, 92);
+      cara.classList.add('avatar-grande');
+      return cara;
+    })(),
+    el('div', { clase: 'crece' }, [
+      el('h1', { estilo: 'margin:0;font-size:24px',
+        texto: ficha.mote ? `@${ficha.mote}` : (ficha.nombre || 'Guardián') }),
+      ficha.mote
+        ? el('div', { clase: 'mini', texto: ficha.nombre || '' })
+        : null,
+      el('div', { clase: 'fila envuelve', estilo: 'gap:6px;margin-top:9px' }, [
+        el('span', { clase: 'pastilla', estilo: 'background:rgba(192,132,252,.16);color:var(--morado)',
+          texto: `✨ ${num(ficha.aura ?? 0)} de aura` }),
+        el('span', { clase: 'pastilla', estilo: 'background:rgba(251,191,36,.16);color:var(--ambar)',
+          texto: `⭐ ${num(ficha.puntos ?? 0)} puntos` }),
+        el('span', { clase: 'pastilla', texto: `${prog.rango.icono} ${prog.rango.nombre}` }),
+      ]),
+    ]),
+    mio ? el('button', {
+      clase: 'btn s', texto: '🎬 Publicar accion', onclick: () => ctx.ir('comunidad'),
+    }) : null,
+  ]));
+
+  // --------------------------------------------------------------- metricas
+  cuerpo.appendChild(el('div', { clase: 'rejilla c4 seccion' }, [
+    tarjetaMetrica({ etiqueta: 'CO₂e evitado', valor: co2(ficha.co2e_total ?? 0), icono: '🌍', color: 'var(--verde)' }),
+    tarjetaMetrica({ etiqueta: 'Acciones', valor: num(ficha.registros_n ?? 0), icono: '✅' }),
+    tarjetaMetrica({ etiqueta: 'Dias activos', valor: num(ficha.dias_activos ?? 0), icono: '🔥', color: 'var(--naranja)' }),
+    tarjetaMetrica({ etiqueta: 'Publicadas', valor: String(publicaciones.length), icono: '🎬', color: 'var(--cian)' }),
+  ]));
+
+  // ------------------------------------------------------------ el historial
+  cuerpo.appendChild(el('h2', { texto: mio ? 'Todo lo que has publicado' : 'Sus buenas acciones' }));
+
+  if (!publicaciones.length) {
+    cuerpo.appendChild(vacio('🎬', mio ? 'Tu espacio esta vacio' : 'Todavia no ha publicado nada',
+      mio ? 'Publica una accion desde Comunidad y aparecera aqui para siempre' : ''));
+    return;
+  }
+
+  cuerpo.appendChild(el('div', { clase: 'rejilla ancha' },
+    publicaciones.map((p) => tarjetaPublicacion(p, reacciones.get(p.id) || null, ctx, repintar))));
+}
+
+  __exp.vistaEspacio = vistaEspacio;
+});
+
 __def("src/ui/app.js", function (__exp, __req) {
 /**
  * app.js — Carcasa de la aplicacion: navegacion, enrutado y arranque.
@@ -10846,6 +11102,7 @@ const { vistaComunidad } = __req("src/ui/vistas/comunidad.js");
 const { vistaCiencia } = __req("src/ui/vistas/ciencia.js");
 const { vistaPerfil } = __req("src/ui/vistas/perfil.js");
 const { vistaBienvenida, tocaBienvenida, marcarVisto } = __req("src/ui/vistas/bienvenida.js");
+const { vistaEspacio } = __req("src/ui/vistas/espacio.js");
 const { recogerSesionDeURL, haySesion, miPerfil } = __req("src/core/nube.js");
 const { motePendiente, guardarMotePendiente, fijarMote } = __req("src/core/social.js");
 
@@ -10862,6 +11119,7 @@ const RUTAS = [
   { id: 'aire',      etiqueta: 'Aire',       icono: '💨', vista: vistaAire },
   { id: 'ranking',   etiqueta: 'Ranking',    icono: '🏆', vista: vistaRanking },
   { id: 'comunidad', etiqueta: 'Comunidad',  icono: '🎬', vista: vistaComunidad },
+  { id: 'espacio',   etiqueta: 'Mi espacio', icono: '🪪', vista: vistaEspacio },
   { id: 'nube',      etiqueta: 'Nube y grupos', icono: '☁️', vista: vistaNube },
   { separador: true },
   { id: 'ciencia',   etiqueta: 'Ciencia',    icono: '🔬', vista: vistaCiencia },
@@ -10878,8 +11136,14 @@ function iniciar(raiz) {
 
   const guardado = cargar();
   const almacen = crearAlmacen(guardado || estadoInicial());
-  let rutaActual = (location.hash || '').slice(1);
-  if (!RUTAS.some((r) => r.id === rutaActual)) rutaActual = '';
+  const partir = (h) => {
+    const bruto = String(h || '').replace(/^#/, '');
+    const i = bruto.indexOf('/');
+    return i < 0 ? [bruto, null] : [bruto.slice(0, i), decodeURIComponent(bruto.slice(i + 1))];
+  };
+
+  let [rutaActual, argRuta] = partir(location.hash);
+  if (!RUTAS.some((r) => r.id === rutaActual)) { rutaActual = ''; argRuta = null; }
 
   // Primera visita sin cuenta: se entra por la portada, no por el panel. Es la
   // diferencia entre una herramienta y una comunidad — y sin ella, crear una
@@ -10895,9 +11159,10 @@ function iniciar(raiz) {
 
   const ctx = {
     almacen,
-    ir(ruta) {
+    ir(ruta, arg = null) {
       rutaActual = ruta;
-      location.hash = `#${ruta}`;
+      argRuta = arg;
+      location.hash = arg ? `#${ruta}/${encodeURIComponent(arg)}` : `#${ruta}`;
       pintar();
       contenido.scrollIntoView({ block: 'start', behavior: 'instant' });
       window.scrollTo(0, 0);
@@ -10956,7 +11221,7 @@ function iniciar(raiz) {
     const ruta = RUTAS.find((r) => r.id === rutaActual) || RUTAS.find((r) => r.id === 'panel');
     contenido.innerHTML = '';
     try {
-      contenido.appendChild(ruta.vista(ctx));
+      contenido.appendChild(ruta.vista(ctx, argRuta));
     } catch (e) {
       console.error(e);
       contenido.appendChild(el('div', { clase: 'aviso error' },
@@ -10967,9 +11232,10 @@ function iniciar(raiz) {
   window.addEventListener('hashchange', () => {
     const vuelta = recogerSesionDeURL();
     if (vuelta.estado !== 'nada') { anunciarVuelta(vuelta, ctx); return; }
-    const nueva = location.hash.slice(1);
-    if (nueva && nueva !== rutaActual && RUTAS.some((r) => r.id === nueva)) {
+    const [nueva, arg] = partir(location.hash);
+    if (nueva && RUTAS.some((r) => r.id === nueva) && (nueva !== rutaActual || arg !== argRuta)) {
       rutaActual = nueva;
+      argRuta = arg;
       pintar();
     }
   });

@@ -205,6 +205,47 @@ await prueba('nadie puede mover su reaccion a otra publicacion', async () => {
   if (cols.join(',') !== 'tipo') throw new Error(`escribible: ${cols.join(', ') || '(nada)'}`);
 });
 
+console.log('\n── 5ter. Publicar sin foto ni video ──');
+// Casi todo lo que se registra no tiene camara detras: beber agua del grifo,
+// ir en bus, apagar el aire. Si publicar exigiera un medio, el espacio de cada
+// persona saldria medio vacio por falta de camara, no de acciones.
+await prueba('se puede publicar una accion sin medio', async () => {
+  await db.exec('reset role;');
+  await db.exec(`insert into public.registros (id, perfil_id, accion_id, categoria, cantidad, unidad, co2e, puntos, fecha)
+                 values ('r_txt','${ANA}','agua_grifo','agua',1,'litro',0.2,12,current_date)`);
+  await como(ANA, () => db.exec(
+    `insert into public.publicaciones (perfil_id, registro_id, accion_id, categoria, descripcion)
+     values ('${ANA}','r_txt','agua_grifo','agua','Hoy solo agua del grifo')`));
+  await db.exec('reset role;');
+  const f = (await db.query(
+    `select ruta_medio, tipo_medio from public.publicaciones where registro_id='r_txt'`)).rows[0];
+  if (!f) throw new Error('no se inserto');
+  if (f.ruta_medio !== null || f.tipo_medio !== null) throw new Error('deberia quedar sin medio');
+});
+
+await prueba('publicar sin medio da menos aura que publicar con medio', async () => {
+  // Si valieran igual, activar el compartir automatico llenaria el aura de
+  // lineas de texto y dejaria de medir lo que dice medir: contagiar el habito.
+  await db.exec('reset role;');
+  const sinMedio = (await db.query(
+    `select case when ruta_medio is null then 3 else 8 end as base
+       from public.publicaciones where registro_id='r_txt'`)).rows[0].base;
+  const conMedio = (await db.query(
+    `select case when ruta_medio is null then 3 else 8 end as base
+       from public.publicaciones where ruta_medio is not null limit 1`)).rows[0];
+  if (Number(sinMedio) !== 3) throw new Error(`sin medio vale ${sinMedio}`);
+  if (conMedio && Number(conMedio.base) !== 8) throw new Error(`con medio vale ${conMedio.base}`);
+});
+
+await prueba('un tipo de medio invalido se sigue rechazando', async () => {
+  await db.exec('reset role;');
+  try {
+    await db.exec(`insert into public.publicaciones (perfil_id, registro_id, accion_id, categoria, ruta_medio, tipo_medio)
+                   values ('${ANA}','r_txt2','x','agua','${ANA}/a.bin','audio')`);
+  } catch { return; }
+  throw new Error('acepto tipo_medio = audio');
+});
+
 console.log('\n── 6bis. El escaparate de la portada ──');
 // La funcion se ve SIN cuenta, asi que lo que devuelve es lo unico que este
 // proyecto ensena a un desconocido. Que no se cuele un perfil privado.

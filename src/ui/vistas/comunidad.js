@@ -105,7 +105,7 @@ async function pintarMuro(cuerpo, ctx, repintar) {
   ]));
 }
 
-function tarjetaPublicacion(p, reaccionMia, ctx, repintar) {
+export function tarjetaPublicacion(p, reaccionMia, ctx, repintar) {
   let meGusta = reaccionMia;
   const a = accion(p.accion_id);
   const cat = CATEGORIAS[p.categoria];
@@ -219,9 +219,16 @@ function tarjetaPublicacion(p, reaccionMia, ctx, repintar) {
     el('div', { estilo: 'padding:13px' }, [
       el('div', { clase: 'fila entre', estilo: 'margin-bottom:7px' }, [
         el('div', { clase: 'fila', estilo: 'gap:7px;min-width:0' }, [
-          avatar({ url: social.urlMedio(p.autor_avatar), nombre: p.autor_nombre, mote: p.autor_mote }, 26),
-          el('strong', { estilo: 'font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',
-            texto: p.autor_mote ? `@${p.autor_mote}` : (p.autor_nombre || 'Alguien') }),
+          el('button', {
+            clase: 'enlace-autor',
+            title: p.autor_mote ? `Ver el espacio de @${p.autor_mote}` : 'Sin mote todavia',
+            disabled: p.autor_mote ? null : '',
+            onclick: () => p.autor_mote && ctx.ir('espacio', p.autor_mote),
+          }, [
+            avatar({ url: social.urlMedio(p.autor_avatar), nombre: p.autor_nombre, mote: p.autor_mote }, 26),
+            el('strong', { estilo: 'font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',
+              texto: p.autor_mote ? `@${p.autor_mote}` : (p.autor_nombre || 'Alguien') }),
+          ]),
           el('span', { clase: 'pastilla', estilo: 'background:rgba(192,132,252,.16);color:var(--morado)',
             texto: `✨ ${num(p.autor_aura ?? 0)}` }),
         ]),

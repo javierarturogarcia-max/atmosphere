@@ -28,7 +28,7 @@ La mayoría de las apps de sostenibilidad fallan por una de estas tres razones:
 
 **Sistema de juego** — XP con curva superlineal, 10 rangos, 47 insignias evaluadas por predicados puros, misiones diarias/semanales/mensuales generadas de forma determinista, rachas con congelaciones, 6 ligas, 16 recompensas canjeables.
 
-**Sincronización opcional en la nube** — Postgres (Supabase) con seguridad por fila, grupos por clase o centro, y ranking con personas reales. Desactivada por defecto: la app funciona entera sin cuenta. **El cliente nunca escribe su propia puntuación** — solo inserta registros inmutables, y el servidor deriva los totales con un disparador. El esquema se verifica contra un PostgreSQL real con `npm run test:db` (30 comprobaciones del núcleo + 26 de la capa social). Puesta en marcha en [`db/INSTALACION.md`](db/INSTALACION.md).
+**Sincronización opcional en la nube** — Postgres (Supabase) con seguridad por fila, grupos por clase o centro, y ranking con personas reales. Desactivada por defecto: la app funciona entera sin cuenta. **El cliente nunca escribe su propia puntuación** — solo inserta registros inmutables, y el servidor deriva los totales con un disparador. El esquema se verifica contra un PostgreSQL real con `npm run test:db` (30 comprobaciones del núcleo + 31 de la capa social). Puesta en marcha en [`db/INSTALACION.md`](db/INSTALACION.md).
 
 **Analítica** — regresión OLS y Theil-Sen, test de tendencia de Mann-Kendall con corrección por empates, media móvil, EWMA, bootstrap, índices de Shannon/Pielou/Gini, perfiles circadiano y semanal, mapa de calor de constancia.
 
@@ -56,6 +56,10 @@ La mayoría de las apps de sostenibilidad fallan por una de estas tres razones:
 
 **Verificación con el dispositivo** — GPS en vivo o importación de trazas GPX/TCX desde Strava, Garmin, Komoot o Apple Salud. La distancia la mide el aparato, no la teclea la persona: se infiere el modo de transporte del perfil de velocidad, se descartan los saltos de GPS y se comprueba que la traza respalde la acción declarada.
 
+**Tu espacio** — cada persona tiene una página propia con URL compartible (`#espacio/tu_mote`): su foto, su aura, su impacto y **todo lo que ha publicado**. Se llega pulsando cualquier mote del muro. Desde ahí se reacciona igual que en la comunidad.
+
+**Compartir automático, si tú quieres** — un interruptor en Perfil publica en tu espacio cada acción que registres, sin foto siquiera. Viene **apagado**: sin él, tus registros siguen siendo privados y solo se publica lo que elijas a mano. Publicar sin foto da menos aura que enseñar algo (3 frente a 8), para que activarlo no convierta el aura en un contador de registros.
+
 **Foto de perfil** — se pone y se cambia desde ⚙️ Perfil, con la cámara o eligiendo del carrete. Se recorta a un cuadrado de 320 px, se guarda en el dispositivo, y si hay cuenta se sube para que aparezca junto a tu mote en el muro. Quien no tenga foto sale con su inicial, no con un hueco.
 
 **Se entra por la puerta, no por los ajustes** — quien abre el enlace ve una portada con quién ya está dentro y dos botones: crear cuenta o entrar. La app trae el proyecto de Supabase puesto, así que nadie tiene que pegar una URL ni una clave para registrarse. El mote se propone solo a partir del nombre, el país se pide en el alta porque determina la intensidad de carbono de tu red eléctrica, y quien prefiera no registrarse entra igual con **Explorar sin cuenta**.
@@ -72,8 +76,8 @@ El aura **no se mezcla con los puntos**: los puntos son impacto físico, el aura
 
 ```bash
 npm run dev      # servidor local en http://localhost:4173
-npm test         # 190 pruebas del motor
-npm run test:db  # ejecuta el SQL contra un PostgreSQL real (PGlite): 30 + 26 comprobaciones
+npm test         # 192 pruebas del motor
+npm run test:db  # ejecuta el SQL contra un PostgreSQL real (PGlite): 30 + 31 comprobaciones
 npm run build    # genera dist/atmosphere.html (un solo archivo, sin dependencias)
 npm run verify   # pruebas + esquema + build
 ```
@@ -125,7 +129,7 @@ src/
     ├── componentes.js    Primitivas y gráficos
     ├── medios.js         Cámara, miniaturas e IndexedDB
     ├── camara.js         Grabacion en vivo con getUserMedia + sensores
-    └── vistas/           14 vistas
+    └── vistas/           15 vistas
 ```
 
 La separación **impacto ≠ puntos** es deliberada: el impacto es física y no debe contaminarse con reglas de juego; los puntos son una capa motivacional construida encima y sustituible.
@@ -155,7 +159,7 @@ subcarpeta de proyecto.
 
 ### GitHub Pages (configurado en este repositorio)
 
-El flujo de trabajo `.github/workflows/pages.yml` ejecuta las 190 pruebas,
+El flujo de trabajo `.github/workflows/pages.yml` ejecuta las 192 pruebas,
 comprueba que `dist/` no esté desfasado respecto a `src/` y publica. Para
 activarlo una sola vez:
 

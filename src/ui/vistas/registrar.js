@@ -10,6 +10,8 @@ import { parsearTraza, metadatosTraza } from '../../core/gpx.js';
 import { procesarMedio, selectorMedio, guardarMedio, LIMITE_ARCHIVO_MB } from '../medios.js';
 import { capturar, hayCamaraEnApp, SEGUNDOS_CLIP } from '../camara.js';
 import { evaluarEvidencia, NIVELES_EVIDENCIA } from '../../core/evidencia.js';
+import * as api from '../../core/nube.js';
+import * as social from '../../core/social.js';
 
 let filtroCat = 'todas';
 let busqueda = '';
@@ -224,6 +226,7 @@ function abrirFormulario(a, ctx) {
             }
             cerrar();
             celebrar(res, a);
+            compartirSiProcede(ctx, res.registro, a, medio?.blob || null);
             ctx.refrescar();
           },
         }),
@@ -503,4 +506,37 @@ function construirMedios(a, estado, alAdjuntar) {
 
   pintar();
   return caja;
+}
+
+
+/**
+ * Comparte la accion recien registrada en el espacio de la persona, si lo tiene
+ * activado.
+ *
+ * VA DETRAS DEL REGISTRO, NO DENTRO. La accion ya esta guardada en el
+ * dispositivo cuando esto empieza: si falla la red, el permiso o la nube, no se
+ * pierde nada y el aviso es discreto. Un registro que fallara porque no hay
+ * cobertura seria un fallo mucho peor que una publicacion que no sale.
+ *
+ * Y hace falta sincronizar antes: la politica del servidor solo deja publicar
+ * sobre un registro que ya existe alli, precisamente para que nadie publique en
+ * nombre de acciones inventadas.
+ */
+async function compartirSiProcede(ctx, registro, accionInfo, blob) {
+  const estado = ctx.almacen.get();
+  if (!estado.perfil?.compartirAuto || !api.haySesion()) return;
+  try {
+    await api.sincronizar(estado.registros, (id) => accion(id)?.categoria || 'otras');
+    await social.publicar(registro, blob, {
+      categoria: accionInfo.categoria,
+      descripcion: registro.nota || '',
+    });
+    toast({ titulo: 'Compartido en tu espacio', icono: '🪪',
+      texto: blob ? 'Con tu prueba.' : 'Sin foto: puedes anadirla publicandola a mano.' });
+  } catch (e) {
+    // Duplicado = ya estaba publicada. No es un fallo que merezca avisar.
+    if (/duplicate|unique|23505/i.test(e.message || '')) return;
+    toast({ titulo: 'No se pudo compartir', tipo: 'alerta', icono: '⚠️',
+      texto: `${e.message} El registro si se guardo.` });
+  }
 }

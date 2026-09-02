@@ -388,3 +388,16 @@ tr.destacada td { background: rgba(52, 211, 153, 0.09); font-weight: 650; }
 }
 .avatar-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .avatar-grande { box-shadow: 0 0 0 3px var(--borde), 0 10px 30px rgba(0, 0, 0, 0.35); }
+
+/* ── Espacio personal ────────────────────────────────────────────────────── */
+.ficha-espacio { display: flex; align-items: center; gap: 17px; flex-wrap: wrap; }
+.enlace-autor {
+  display: inline-flex; align-items: center; gap: 7px; min-width: 0;
+  border: none; background: none; padding: 0; cursor: pointer;
+  color: inherit; font: inherit; text-align: left; border-radius: 999px;
+  transition: opacity 120ms ease;
+}
+.enlace-autor:hover:not(:disabled) { opacity: 0.75; }
+.enlace-autor:disabled { cursor: default; }
+.enlace-autor strong { text-decoration: underline; text-decoration-color: transparent; transition: text-decoration-color 120ms ease; }
+.enlace-autor:hover:not(:disabled) strong { text-decoration-color: currentColor; }

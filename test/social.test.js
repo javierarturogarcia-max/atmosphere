@@ -114,3 +114,20 @@ test('lo que el diagnostico no reconoce conserva el codigo y el texto', () => {
   assert.match(m, /507/);
   assert.match(m, /Insufficient Storage/);
 });
+
+// El aura tiene que distinguir publicar una linea de texto de ensenar algo.
+// Sin esa diferencia, activar el compartir automatico llenaria el aura de
+// registros y dejaria de medir lo que dice medir: contagiar el habito.
+test('publicar sin medio da menos aura que publicar con medio', () => {
+  assert.equal(auraDe({ conMedio: false }), AURA.porPublicarSinMedio);
+  assert.equal(auraDe({ conMedio: true }), AURA.porPublicar);
+  assert.ok(auraDe({ conMedio: false }) < auraDe({ conMedio: true }));
+});
+
+test('la prueba grabada en vivo cuenta como verificada', () => {
+  // Es el nivel mas fuerte de todos y se habia quedado fuera de la lista al
+  // anadirlo: un video grabado en la app no sumaba el extra de verificacion.
+  assert.equal(auraDe({ nivelEvidencia: 'envivo' }),
+    AURA.porPublicar + AURA.porEvidenciaVerificada);
+  assert.equal(auraDe({ nivelEvidencia: 'debil' }), AURA.porPublicar);
+});
