@@ -307,7 +307,14 @@ create trigger tras_reporte
 -- -----------------------------------------------------------------------------
 -- 5. VISTAS DEL MURO
 -- -----------------------------------------------------------------------------
-create or replace view public.muro
+-- SE BORRA ANTES DE CREAR, y no es un capricho: "create or replace view" solo
+-- sabe ANADIR columnas al final. Si la lista cambia en medio —como paso al
+-- meter autor_avatar antes de creado— PostgreSQL entiende que se quiere
+-- renombrar la columna que ocupaba ese puesto y falla con
+-- "cannot change name of view column". Borrando primero, el guion vale igual
+-- en una base recien creada que en una que ya tenia la vista anterior.
+drop view if exists public.muro;
+create view public.muro
 with (security_invoker = true) as
   select p.id, p.perfil_id, p.accion_id, p.categoria, p.descripcion, p.ruta_medio, p.tipo_medio,
          p.nivel_evidencia, p.co2e, p.puntos, p.likes_n,
@@ -318,7 +325,8 @@ with (security_invoker = true) as
    order by p.creado desc;
 
 -- Lo viral: lo mas gustado de la ultima semana.
-create or replace view public.virales
+drop view if exists public.virales;
+create view public.virales
 with (security_invoker = true) as
   select p.id, p.perfil_id, p.accion_id, p.categoria, p.descripcion, p.ruta_medio, p.tipo_medio,
          p.nivel_evidencia, p.co2e, p.puntos, p.likes_n,

@@ -118,6 +118,15 @@ exactamente qué faltó.
 **2 · Las tres políticas.** Storage → **Policies** → sobre el cubo
 `evidencias` → **New policy** → *For full customization*. Crea estas tres:
 
+> Si al crearlas desde el panel te aparecen con un sufijo raro
+> (`subir a mi carpeta 1cxz3yl_0`), es que Supabase les puso nombre propio.
+> Funcionan igual, pero al reejecutar `social.sql` no se sustituyen —solo se
+> reemplazan las de nombre exacto— y se van acumulando duplicados. No es un
+> problema de seguridad: son permisivas y hacen lo mismo. Para dejarlo limpio,
+> borra las del sufijo desde **Storage → Policies** y quédate con las tres de
+> nombre exacto.
+
+
 | Nombre | Operación | Rol | Expresión |
 |---|---|---|---|
 | `leer evidencias` | SELECT | `public` | `bucket_id = 'evidencias'` |

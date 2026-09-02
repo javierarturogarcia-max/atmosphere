@@ -304,6 +304,61 @@ await prueba('un error de permisos en el almacen no tumba el resto del guion', a
   if (politicas !== 0) throw new Error('el rol pudo crear politicas: la prueba no reproduce el caso');
 });
 
+console.log('\n── 9. Actualizar una base que ya existia ──');
+// Esta seccion existe por un fallo real en produccion. La bateria parte
+// siempre de una base vacia, asi que "create or replace view" era en realidad
+// un "create" y nunca se probaba el camino que recorre TODO el mundo que ya
+// tenia la base instalada: reejecutar el guion sobre una version anterior.
+//
+// Y ese camino fallaba. "create or replace view" solo sabe anadir columnas al
+// FINAL: al meter autor_avatar antes de creado, PostgreSQL entendio que se
+// queria renombrar la columna de ese puesto y aborto el guion entero.
+await prueba('el guion se puede reejecutar sobre vistas con otras columnas', async () => {
+  const otra = await baseSimulada();
+  await otra.exec(readFileSync('db/esquema.sql', 'utf8'));
+  await otra.exec(readFileSync('db/social.sql', 'utf8'));
+
+  // Se simula una instalacion antigua: las mismas vistas con MENOS columnas y
+  // en otro orden, que es exactamente lo que tenia quien instalo la version
+  // anterior.
+  await otra.exec(`
+    drop view if exists public.muro;
+    drop view if exists public.virales;
+    create view public.muro with (security_invoker = true) as
+      select id, perfil_id, likes_n, creado from public.publicaciones where oculto = false;
+    create view public.virales with (security_invoker = true) as
+      select id, perfil_id, likes_n, creado from public.publicaciones where oculto = false;
+  `);
+
+  await otra.exec(readFileSync('db/social.sql', 'utf8'));
+
+  const cols = (await otra.query(`
+    select column_name::text as c from information_schema.columns
+     where table_schema='public' and table_name='muro' order by ordinal_position`)).rows.map((r) => r.c);
+  await otra.close();
+  if (!cols.includes('autor_avatar')) {
+    throw new Error(`la vista quedo sin autor_avatar: ${cols.join(', ')}`);
+  }
+});
+
+await prueba('reejecutarlo dos veces seguidas no cambia nada', async () => {
+  const otra = await baseSimulada();
+  await otra.exec(readFileSync('db/esquema.sql', 'utf8'));
+  const social = readFileSync('db/social.sql', 'utf8');
+  await otra.exec(social);
+  const antes = (await otra.query(`
+    select column_name::text as c from information_schema.columns
+     where table_schema='public' and table_name in ('muro','virales','perfiles')
+     order by table_name, ordinal_position`)).rows.map((r) => r.c).join(',');
+  await otra.exec(social);
+  const despues = (await otra.query(`
+    select column_name::text as c from information_schema.columns
+     where table_schema='public' and table_name in ('muro','virales','perfiles')
+     order by table_name, ordinal_position`)).rows.map((r) => r.c).join(',');
+  await otra.close();
+  if (antes !== despues) throw new Error('la segunda pasada cambio el esquema');
+});
+
 console.log(`\n${'═'.repeat(62)}`);
 if (fallos.length) { console.log(`RESULTADO: ${fallos.length} fallo(s)`); process.exit(1); }
 console.log('RESULTADO: la capa social cierra todos sus candados ✅');
