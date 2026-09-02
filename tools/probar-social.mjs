@@ -313,14 +313,19 @@ console.log('\n── 9. Actualizar una base que ya existia ──');
 // Y ese camino fallaba. "create or replace view" solo sabe anadir columnas al
 // FINAL: al meter autor_avatar antes de creado, PostgreSQL entendio que se
 // queria renombrar la columna de ese puesto y aborto el guion entero.
-await prueba('el guion se puede reejecutar sobre vistas con otras columnas', async () => {
+await prueba('el guion se reejecuta sobre una instalacion anterior', async () => {
   const otra = await baseSimulada();
   await otra.exec(readFileSync('db/esquema.sql', 'utf8'));
   await otra.exec(readFileSync('db/social.sql', 'utf8'));
 
-  // Se simula una instalacion antigua: las mismas vistas con MENOS columnas y
-  // en otro orden, que es exactamente lo que tenia quien instalo la version
-  // anterior.
+  // Se simula una instalacion ANTIGUA. Esta es la parte que hay que mantener a
+  // mano cuando cambie la forma de algo: es la foto de como estaba la base
+  // antes, y sin ella el guion solo se prueba sobre una base vacia, que es
+  // justo el unico caso en el que no puede fallar.
+  //
+  // Cubre las dos formas que PostgreSQL se niega a reemplazar en caliente:
+  //   - una vista con las columnas en otro orden
+  //   - una funcion que devuelve otra cosa
   await otra.exec(`
     drop view if exists public.muro;
     drop view if exists public.virales;
@@ -328,6 +333,13 @@ await prueba('el guion se puede reejecutar sobre vistas con otras columnas', asy
       select id, perfil_id, likes_n, creado from public.publicaciones where oculto = false;
     create view public.virales with (security_invoker = true) as
       select id, perfil_id, likes_n, creado from public.publicaciones where oculto = false;
+
+    drop function if exists public.vecindario(integer);
+    create function public.vecindario(n integer default 8)
+    returns table (nombre text, mote text, puntos integer)
+    language sql stable security definer set search_path = public as $viejo$
+      select p.nombre, p.mote, p.puntos from public.perfiles p where p.publico = true limit 1;
+    $viejo$;
   `);
 
   await otra.exec(readFileSync('db/social.sql', 'utf8'));
@@ -335,9 +347,13 @@ await prueba('el guion se puede reejecutar sobre vistas con otras columnas', asy
   const cols = (await otra.query(`
     select column_name::text as c from information_schema.columns
      where table_schema='public' and table_name='muro' order by ordinal_position`)).rows.map((r) => r.c);
+  const devuelve = (await otra.query('select * from public.vecindario(1)')).fields.map((f) => f.name);
   await otra.close();
   if (!cols.includes('autor_avatar')) {
     throw new Error(`la vista quedo sin autor_avatar: ${cols.join(', ')}`);
+  }
+  if (!devuelve.includes('avatar')) {
+    throw new Error(`la funcion quedo sin avatar: ${devuelve.join(', ')}`);
   }
 });
 

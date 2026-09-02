@@ -357,7 +357,14 @@ grant select on public.muro, public.virales to authenticated;
 -- todas sus columnas. Esta funcion devuelve CUATRO campos y ninguno mas, de
 -- perfiles que su duena marco como publicos. Es la diferencia entre abrir una
 -- ventana y quitar la pared.
-create or replace function public.vecindario(n integer default 8)
+-- Mismo motivo que las vistas: "create or replace function" tampoco puede
+-- cambiar lo que la funcion DEVUELVE. Al anadir avatar a la tabla de retorno,
+-- PostgreSQL responde "cannot change return type of existing function" y tumba
+-- el guion entero. Borrandola antes, vale igual en una base nueva que en una
+-- que ya tenia la version anterior.
+drop function if exists public.vecindario(integer);
+
+create function public.vecindario(n integer default 8)
 returns table (nombre text, mote text, puntos integer, aura integer, avatar text)
 language sql
 stable

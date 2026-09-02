@@ -247,7 +247,15 @@ create trigger tras_insertar_registro
 -- security_invoker = true hace que la vista respete las politicas RLS de quien
 -- consulta, en vez de las del propietario. Sin esto, la vista seria una puerta
 -- trasera que expondria tambien los perfiles marcados como no publicos.
-create or replace view public.ranking_global
+-- SE BORRAN ANTES DE CREARSE. "create or replace view" solo sabe anadir
+-- columnas al FINAL: si alguna vez cambia el orden o se mete una en medio,
+-- PostgreSQL entiende que se quiere renombrar la de ese puesto y aborta el
+-- guion entero con "cannot change name of view column". Como el editor SQL de
+-- Supabase ejecuta todo en una transaccion, eso deshace tambien lo que ya
+-- habia funcionado. Borrando primero, el guion vale igual en una base nueva
+-- que en una que ya tenia una version anterior.
+drop view if exists public.ranking_global;
+create view public.ranking_global
 with (security_invoker = true) as
   select id, nombre, pais, puntos, nivel, co2e_total, dias_activos, confianza, actualizado
     from public.perfiles
@@ -255,7 +263,8 @@ with (security_invoker = true) as
    order by puntos desc
    limit 200;
 
-create or replace view public.ranking_grupos
+drop view if exists public.ranking_grupos;
+create view public.ranking_grupos
 with (security_invoker = true) as
   select m.grupo_id,
          g.nombre as grupo,
@@ -266,7 +275,8 @@ with (security_invoker = true) as
    order by p.puntos desc;
 
 -- Impacto agregado de toda la comunidad: la cifra que combate la ecoansiedad.
-create or replace view public.impacto_comunidad
+drop view if exists public.impacto_comunidad;
+create view public.impacto_comunidad
 with (security_invoker = true) as
   select count(*)::int         as participantes,
          sum(co2e_total)       as co2e_total,
