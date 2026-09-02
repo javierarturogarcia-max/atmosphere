@@ -1,5 +1,5 @@
 /** comunidad.js — Muro de buenas acciones: clips cortos, me gusta y aura. */
-import { el, num, co2, toast, modal, vacio, esc, tarjetaMetrica, logoMutuu } from '../componentes.js';
+import { el, num, co2, toast, modal, vacio, esc, tarjetaMetrica, logoMutuu, avatar } from '../componentes.js';
 import * as social from '../../core/social.js';
 import * as api from '../../core/nube.js';
 import { accion, CATEGORIAS } from '../../data/acciones.js';
@@ -219,6 +219,7 @@ function tarjetaPublicacion(p, reaccionMia, ctx, repintar) {
     el('div', { estilo: 'padding:13px' }, [
       el('div', { clase: 'fila entre', estilo: 'margin-bottom:7px' }, [
         el('div', { clase: 'fila', estilo: 'gap:7px;min-width:0' }, [
+          avatar({ url: social.urlMedio(p.autor_avatar), nombre: p.autor_nombre, mote: p.autor_mote }, 26),
           el('strong', { estilo: 'font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',
             texto: p.autor_mote ? `@${p.autor_mote}` : (p.autor_nombre || 'Alguien') }),
           el('span', { clase: 'pastilla', estilo: 'background:rgba(192,132,252,.16);color:var(--morado)',

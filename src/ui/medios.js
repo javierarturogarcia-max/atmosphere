@@ -118,6 +118,41 @@ function comoImagen(file) {
  * @returns {Promise<{tipo:'foto', blob:Blob, url:string, hash:string, exif:object,
  *                    ancho:number, alto:number, bytes:number, fechaArchivo:number}>}
  */
+/** Lado del avatar. Un circulo de 34-96 px no necesita mas. */
+export const LADO_AVATAR = 320;
+
+/**
+ * Recorta una imagen a un cuadrado centrado del tamano del avatar.
+ *
+ * Se recorta y no se deforma: un avatar circular sobre una foto apaisada sin
+ * recortar deja a la persona estirada. Y se reduce a 320 px porque la
+ * miniatura normal de 1024 pesaria diez veces mas para verse igual dentro de
+ * un circulo de 40 px.
+ *
+ * @param {Blob} blob imagen de origen
+ * @returns {Promise<Blob>} JPEG cuadrado
+ */
+export async function procesarAvatar(blob) {
+  if (blob.size > LIMITE_ARCHIVO_MB * 1048576) {
+    throw new Error(`La imagen pesa ${(blob.size / 1048576).toFixed(1)} MB y el limite es ${LIMITE_ARCHIVO_MB} MB.`);
+  }
+  const { img, revocar } = await comoImagen(blob);
+  try {
+    const lado = Math.min(img.width, img.height);
+    const dx = (img.width - lado) / 2;
+    const dy = (img.height - lado) / 2;
+    const lienzo = document.createElement('canvas');
+    lienzo.width = LADO_AVATAR;
+    lienzo.height = LADO_AVATAR;
+    const ctx = lienzo.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, dx, dy, lado, lado, 0, 0, LADO_AVATAR, LADO_AVATAR);
+    const salida = await new Promise((ok) => lienzo.toBlob(ok, 'image/jpeg', 0.85));
+    if (!salida) throw new Error('No se pudo procesar la imagen.');
+    return salida;
+  } finally { revocar(); }
+}
+
 export async function procesarFoto(file) {
   if (file.size > LIMITE_ARCHIVO_MB * 1048576) {
     throw new Error(`La foto pesa ${(file.size / 1048576).toFixed(1)} MB y el limite es ${LIMITE_ARCHIVO_MB} MB.`);
@@ -230,12 +265,17 @@ export async function procesarMedio(file) {
 }
 
 /** Crea el selector de archivo con captura directa de camara en movil. */
-export function selectorMedio(alElegir, { video = true } = {}) {
+/**
+ * @param {(f:File) => void} alElegir
+ * @param {{video?:boolean, camara?:'environment'|'user'|false}} opciones
+ *        `camara` false deja elegir del carrete, que para una foto de perfil
+ *        es lo normal: forzar la camara trasera ahi seria estorbar.
+ */
+export function selectorMedio(alElegir, { video = true, camara = 'environment' } = {}) {
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = video ? 'image/*,video/*' : 'image/*';
-  // En movil abre la camara trasera directamente en vez del carrete.
-  input.capture = 'environment';
+  if (camara) input.capture = camara;
   input.style.display = 'none';
   input.addEventListener('change', () => {
     const f = input.files?.[0];

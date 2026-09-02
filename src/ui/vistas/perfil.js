@@ -1,10 +1,14 @@
 /** perfil.js — Perfil, ajustes, datos y privacidad. */
-import { el, num, co2, litros, toast, modal, tarjetaMetrica, progreso, haceCuanto } from '../componentes.js';
+import { el, num, co2, litros, toast, modal, tarjetaMetrica, progreso, haceCuanto, avatar } from '../componentes.js';
 import { paisesOrdenados, pais } from '../../data/paises.js';
 import { progresion, RANGOS } from '../../core/nivel.js';
 import { indiceConfianza } from '../../core/validacion.js';
 import { accion } from '../../data/acciones.js';
 import { descargar } from '../descargas.js';
+import { procesarAvatar, selectorMedio, guardarMedio, leerMedio, borrarMedio } from '../medios.js';
+import { capturar, hayCamaraEnApp } from '../camara.js';
+import * as api from '../../core/nube.js';
+import * as social from '../../core/social.js';
 
 export function vistaPerfil(ctx) {
   const estado = ctx.almacen.get();
@@ -28,6 +32,7 @@ export function vistaPerfil(ctx) {
   raiz.appendChild(el('div', { clase: 'rejilla c2 seccion', estilo: 'align-items:start' }, [
     el('div', { clase: 'tarjeta' }, [
       el('h2', { texto: 'Identidad' }),
+      seccionFoto(ctx),
       el('div', { clase: 'col' }, [
         el('label', { clase: 'campo' }, ['Nombre', nombre]),
         el('label', { clase: 'campo' }, ['Pais (determina el mix electrico de tus calculos)', selPais]),
@@ -182,4 +187,117 @@ export function vistaPerfil(ctx) {
   ]));
 
   return raiz;
+}
+
+
+// ------------------------------------------------------------------- la foto
+
+/**
+ * Foto de perfil: ponerla, cambiarla y quitarla.
+ *
+ * DOS SITIOS, A PROPOSITO. La copia local vive en IndexedDB y hace que la app
+ * siga teniendo cara sin cuenta y sin conexion. Cuando hay sesion se sube
+ * ademas al almacen, porque una foto que solo tu ves no es una foto de perfil
+ * en una red social: la gracia es que aparezca junto a tu mote en el muro.
+ *
+ * Si la subida falla —sin red, sin permisos en el cubo— la foto local se queda
+ * puesta igual y se avisa. Perder la foto por un corte de red seria peor que
+ * tenerla solo en este dispositivo.
+ */
+function seccionFoto(ctx) {
+  const caja = el('div', { clase: 'fila seccion', estilo: 'gap:15px;align-items:center' });
+  const estado = ctx.almacen.get();
+  let urlLocal = null;
+
+  const pintar = () => {
+    caja.innerHTML = '';
+    const cara = avatar({
+      url: urlLocal || (estado.perfil.avatarRemoto ? social.urlMedio(estado.perfil.avatarRemoto) : null),
+      nombre: estado.perfil.nombre, mote: estado.perfil.mote,
+    }, 84);
+    cara.classList.add('avatar-grande');
+
+    const puestaYa = !!(urlLocal || estado.perfil.avatarRemoto);
+    caja.appendChild(cara);
+    caja.appendChild(el('div', { clase: 'crece' }, [
+      el('div', { clase: 'etiqueta', texto: 'Tu foto' }),
+      el('div', { clase: 'fila envuelve', estilo: 'gap:6px;margin-top:7px' }, [
+        hayCamaraEnApp() ? el('button', {
+          clase: 'btn s', texto: '📸 Hacer foto',
+          onclick: async () => {
+            const r = await capturar({ modo: 'foto' });
+            if (r) aplicar(r.blob);
+          },
+        }) : null,
+        el('button', { clase: 'btn s', texto: '🖼️ Elegir imagen', onclick: () => selector.click() }),
+        puestaYa ? el('button', { clase: 'btn s peligro', texto: 'Quitar', onclick: quitar }) : null,
+        selector,
+      ]),
+      el('div', { clase: 'mini', estilo: 'margin-top:6px', texto: api.haySesion()
+        ? 'Se ve junto a tu mote en el muro. Puedes cambiarla cuando quieras.'
+        : 'Sin cuenta se guarda solo en este dispositivo. Al entrar en la comunidad se subira para que aparezca en el muro.' }),
+    ]));
+  };
+
+  const selector = selectorMedio((f) => aplicar(f), { video: false, camara: false });
+
+  async function aplicar(origen) {
+    let recortada;
+    try {
+      recortada = await procesarAvatar(origen);
+    } catch (e) {
+      toast({ titulo: 'No se pudo usar esa imagen', texto: e.message, tipo: 'error', icono: '⛔' });
+      return;
+    }
+
+    // Primero lo local: es lo que hace que la cara aparezca al instante y lo
+    // que sobrevive si la red falla.
+    const id = `av_${Date.now().toString(36)}`;
+    const previo = estado.perfil.avatarLocal;
+    await guardarMedio({ id, blob: recortada, tipo: 'foto' });
+    if (previo) await borrarMedio(previo).catch(() => {});
+    if (urlLocal) URL.revokeObjectURL(urlLocal);
+    urlLocal = URL.createObjectURL(recortada);
+    ctx.almacen.actualizarPerfil({ avatarLocal: id });
+    estado.perfil.avatarLocal = id;
+    pintar();
+
+    if (!api.haySesion()) {
+      toast({ titulo: 'Foto guardada', icono: '🖼️', texto: 'Se ve solo en este dispositivo hasta que entres en la comunidad.' });
+      return;
+    }
+    try {
+      const ruta = await social.subirAvatar(recortada);
+      ctx.almacen.actualizarPerfil({ avatarRemoto: ruta });
+      estado.perfil.avatarRemoto = ruta;
+      toast({ titulo: 'Foto actualizada', icono: '🎉', texto: 'Ya aparece junto a tu mote en el muro.' });
+    } catch (e) {
+      toast({ titulo: 'Guardada aqui, pero no subida', tipo: 'alerta', icono: '⚠️',
+        texto: `${e.message} La foto sigue puesta en este dispositivo.` });
+    }
+    pintar();
+  }
+
+  async function quitar() {
+    if (estado.perfil.avatarLocal) await borrarMedio(estado.perfil.avatarLocal).catch(() => {});
+    if (urlLocal) { URL.revokeObjectURL(urlLocal); urlLocal = null; }
+    ctx.almacen.actualizarPerfil({ avatarLocal: null, avatarRemoto: null });
+    estado.perfil.avatarLocal = null;
+    estado.perfil.avatarRemoto = null;
+    if (api.haySesion()) await social.quitarAvatar().catch(() => {});
+    pintar();
+    toast({ titulo: 'Foto quitada', icono: '🗑️', texto: 'Vuelve a mostrarse tu inicial.' });
+  }
+
+  // La copia local se lee de IndexedDB, que es asincrono: se pinta primero con
+  // lo que haya y se repinta cuando llega.
+  pintar();
+  if (estado.perfil.avatarLocal) {
+    leerMedio(estado.perfil.avatarLocal).then((m) => {
+      if (!m?.blob) return;
+      urlLocal = URL.createObjectURL(m.blob);
+      pintar();
+    }).catch(() => {});
+  }
+  return caja;
 }

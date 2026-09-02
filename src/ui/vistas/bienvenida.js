@@ -10,7 +10,7 @@
  * se elige un mote y se entra. La configuracion tecnica sigue existiendo, pero
  * en Perfil y para quien la necesite.
  */
-import { el, toast, esc, logoMutuu } from '../componentes.js';
+import { el, toast, esc, logoMutuu, avatar } from '../componentes.js';
 import * as api from '../../core/nube.js';
 import * as social from '../../core/social.js';
 import { paisesOrdenados } from '../../data/paises.js';
@@ -141,7 +141,7 @@ function quienHay() {
     }
     lista.appendChild(el('div', { clase: 'fila-avatares' },
       filas.map((f) => el('div', { clase: 'avatar-chip', title: `${f.puntos || 0} puntos` }, [
-        el('span', { clase: 'avatar-inicial', texto: (f.mote || f.nombre || '?').slice(0, 1).toUpperCase() }),
+        avatar({ url: social.urlMedio(f.avatar), nombre: f.nombre, mote: f.mote }, 22),
         el('span', { texto: f.mote ? `@${esc(f.mote)}` : esc(f.nombre || 'Guardián') }),
       ]))));
   }).catch(() => {

@@ -56,6 +56,8 @@ La mayoría de las apps de sostenibilidad fallan por una de estas tres razones:
 
 **Verificación con el dispositivo** — GPS en vivo o importación de trazas GPX/TCX desde Strava, Garmin, Komoot o Apple Salud. La distancia la mide el aparato, no la teclea la persona: se infiere el modo de transporte del perfil de velocidad, se descartan los saltos de GPS y se comprueba que la traza respalde la acción declarada.
 
+**Foto de perfil** — se pone y se cambia desde ⚙️ Perfil, con la cámara o eligiendo del carrete. Se recorta a un cuadrado de 320 px, se guarda en el dispositivo, y si hay cuenta se sube para que aparezca junto a tu mote en el muro. Quien no tenga foto sale con su inicial, no con un hueco.
+
 **Se entra por la puerta, no por los ajustes** — quien abre el enlace ve una portada con quién ya está dentro y dos botones: crear cuenta o entrar. La app trae el proyecto de Supabase puesto, así que nadie tiene que pegar una URL ni una clave para registrarse. El mote se propone solo a partir del nombre, el país se pide en el alta porque determina la intensidad de carbono de tu red eléctrica, y quien prefiera no registrarse entra igual con **Explorar sin cuenta**.
 
 **Red social de buenas acciones** — cada prueba puede publicarse en el muro de la comunidad con un **mote** (`@sembradora`, 3-15 caracteres). Los vídeos cortos se reproducen en bucle y sin sonido, hay pestaña de **🔥 Virales** y de **🕐 Reciente**, y los me gusta alimentan el **aura**, una reputación pública de buenas acciones.

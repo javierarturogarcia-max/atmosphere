@@ -225,7 +225,7 @@ await prueba('el escaparate no expone ni correos ni registros', async () => {
   await db.exec('reset role;');
   const r = await db.query('select * from public.vecindario(1)');
   const cols = r.fields.map((f) => f.name).sort();
-  const esperadas = ['aura', 'mote', 'nombre', 'puntos'];
+  const esperadas = ['aura', 'avatar', 'mote', 'nombre', 'puntos'];
   if (JSON.stringify(cols) !== JSON.stringify(esperadas)) {
     throw new Error(`devuelve ${cols.join(', ')} en vez de ${esperadas.join(', ')}`);
   }

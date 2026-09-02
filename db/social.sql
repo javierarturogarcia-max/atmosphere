@@ -18,7 +18,14 @@
 -- -----------------------------------------------------------------------------
 alter table public.perfiles
   add column if not exists mote text,
+  add column if not exists avatar text,
   add column if not exists aura integer not null default 0 check (aura >= 0);
+
+-- La foto se guarda como RUTA dentro del cubo de medios, no como datos. Meter
+-- una imagen en la fila del perfil la haria viajar entera en cada consulta del
+-- ranking y del muro, que es justo donde mas filas se piden a la vez.
+comment on column public.perfiles.avatar is
+  'Ruta en el cubo evidencias, siempre bajo la carpeta del propio perfil.';
 
 -- El mote es el apodo publico: corto, minusculas, sin espacios y unico.
 alter table public.perfiles
@@ -31,7 +38,7 @@ create unique index if not exists perfiles_mote_unico
   on public.perfiles (lower(mote)) where mote is not null;
 
 -- El cliente puede elegir su mote; el aura sigue siendo del servidor.
-grant update (nombre, pais, publico, mote) on public.perfiles to authenticated;
+grant update (nombre, pais, publico, mote, avatar) on public.perfiles to authenticated;
 
 -- -----------------------------------------------------------------------------
 -- 2. PUBLICACIONES — el muro de buenas acciones
@@ -302,22 +309,26 @@ create trigger tras_reporte
 -- -----------------------------------------------------------------------------
 create or replace view public.muro
 with (security_invoker = true) as
-  select id, perfil_id, accion_id, categoria, descripcion, ruta_medio, tipo_medio,
-         nivel_evidencia, co2e, puntos, likes_n, autor_nombre, autor_mote, autor_aura, creado
-    from public.publicaciones
-   where oculto = false
-   order by creado desc;
+  select p.id, p.perfil_id, p.accion_id, p.categoria, p.descripcion, p.ruta_medio, p.tipo_medio,
+         p.nivel_evidencia, p.co2e, p.puntos, p.likes_n,
+         p.autor_nombre, p.autor_mote, p.autor_aura, f.avatar as autor_avatar, p.creado
+    from public.publicaciones p
+    left join public.perfiles f on f.id = p.perfil_id
+   where p.oculto = false
+   order by p.creado desc;
 
 -- Lo viral: lo mas gustado de la ultima semana.
 create or replace view public.virales
 with (security_invoker = true) as
-  select id, perfil_id, accion_id, categoria, descripcion, ruta_medio, tipo_medio,
-         nivel_evidencia, co2e, puntos, likes_n, autor_nombre, autor_mote, autor_aura, creado
-    from public.publicaciones
-   where oculto = false
-     and likes_n > 0
-     and creado > now() - interval '7 days'
-   order by likes_n desc, creado desc
+  select p.id, p.perfil_id, p.accion_id, p.categoria, p.descripcion, p.ruta_medio, p.tipo_medio,
+         p.nivel_evidencia, p.co2e, p.puntos, p.likes_n,
+         p.autor_nombre, p.autor_mote, p.autor_aura, f.avatar as autor_avatar, p.creado
+    from public.publicaciones p
+    left join public.perfiles f on f.id = p.perfil_id
+   where p.oculto = false
+     and p.likes_n > 0
+     and p.creado > now() - interval '7 days'
+   order by p.likes_n desc, p.creado desc
    limit 12;
 
 -- Mismo motivo que arriba: las vistas tambien nacen con todos los permisos
@@ -339,13 +350,13 @@ grant select on public.muro, public.virales to authenticated;
 -- perfiles que su duena marco como publicos. Es la diferencia entre abrir una
 -- ventana y quitar la pared.
 create or replace function public.vecindario(n integer default 8)
-returns table (nombre text, mote text, puntos integer, aura integer)
+returns table (nombre text, mote text, puntos integer, aura integer, avatar text)
 language sql
 stable
 security definer
 set search_path = public
 as $$
-  select p.nombre, p.mote, p.puntos, p.aura
+  select p.nombre, p.mote, p.puntos, p.aura, p.avatar
     from public.perfiles p
    where p.publico = true
    order by p.puntos desc, p.aura desc

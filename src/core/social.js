@@ -310,6 +310,57 @@ export async function fijarMote(mote) {
 }
 
 /**
+ * Sube la foto de perfil y la deja apuntada en el perfil.
+ *
+ * Va al mismo cubo que las pruebas y bajo la carpeta del propio perfil, asi que
+ * la reutiliza la politica que ya existe: cada quien escribe solo en lo suyo.
+ * En la fila se guarda la RUTA, no la imagen: meter la foto en el perfil la
+ * haria viajar entera en cada consulta del ranking y del muro.
+ *
+ * @param {Blob} blob imagen ya reescalada
+ * @returns {Promise<string>} ruta dentro del cubo
+ */
+export async function subirAvatar(blob) {
+  const s = sesion();
+  if (!s?.perfilId) throw new ErrorNube('No has iniciado sesion.', 'sin_sesion');
+  const anterior = (await llamarAPI(
+    `/rest/v1/perfiles?id=eq.${s.perfilId}&select=avatar`))?.[0]?.avatar || null;
+
+  const ruta = await subirMedio(blob);
+  await llamarAPI(`/rest/v1/perfiles?id=eq.${s.perfilId}`, {
+    metodo: 'PATCH', cuerpo: { avatar: ruta }, cabeceras: { Prefer: 'return=minimal' },
+  });
+
+  // La anterior se borra DESPUES de apuntar la nueva. Al reves, un corte de red
+  // en medio dejaria el perfil apuntando a un archivo que ya no existe.
+  if (anterior && anterior !== ruta) await borrarMedioAlmacen(anterior).catch(() => {});
+  return ruta;
+}
+
+/** Quita la foto del perfil y borra el archivo. */
+export async function quitarAvatar() {
+  const s = sesion();
+  if (!s?.perfilId) throw new ErrorNube('No has iniciado sesion.', 'sin_sesion');
+  const anterior = (await llamarAPI(
+    `/rest/v1/perfiles?id=eq.${s.perfilId}&select=avatar`))?.[0]?.avatar || null;
+  await llamarAPI(`/rest/v1/perfiles?id=eq.${s.perfilId}`, {
+    metodo: 'PATCH', cuerpo: { avatar: null }, cabeceras: { Prefer: 'return=minimal' },
+  });
+  if (anterior) await borrarMedioAlmacen(anterior).catch(() => {});
+}
+
+/** Borra un archivo del cubo. La politica solo deja borrar lo propio. */
+async function borrarMedioAlmacen(ruta) {
+  const cfg = configuracion();
+  const s = sesion();
+  if (!cfg || !s?.access_token || !ruta) return;
+  await fetch(`${cfg.url}/storage/v1/object/${CUBO}/${encodeURI(ruta)}`, {
+    method: 'DELETE',
+    headers: { apikey: cfg.anonKey, Authorization: `Bearer ${s.access_token}` },
+  });
+}
+
+/**
  * Mote reservado durante un alta que quedo pendiente de confirmar el correo.
  *
  * Cuando el proyecto exige confirmacion, el alta no devuelve sesion y todavia

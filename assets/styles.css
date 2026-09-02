@@ -340,12 +340,6 @@ tr.destacada td { background: rgba(52, 211, 153, 0.09); font-weight: 650; }
   background: var(--superficie); border: 1px solid var(--borde);
   font-size: 12.5px; color: var(--texto-2);
 }
-.avatar-inicial {
-  width: 22px; height: 22px; border-radius: 50%;
-  display: grid; place-items: center;
-  background: linear-gradient(135deg, var(--verde), var(--cian));
-  color: #04140d; font-weight: 800; font-size: 11px;
-}
 
 @media (max-width: 620px) {
   .hero-bienvenida { padding: 24px 14px; }
@@ -384,3 +378,13 @@ tr.destacada td { background: rgba(52, 211, 153, 0.09); font-weight: 650; }
 }
 .abanico-op:hover { transform: scale(1.28); background: var(--superficie-2); }
 .abanico-op.activo { background: var(--superficie-2); box-shadow: inset 0 0 0 1.5px var(--verde); }
+
+/* ── Avatar ──────────────────────────────────────────────────────────────── */
+.avatar {
+  position: relative; flex: none; display: inline-grid; place-items: center;
+  border-radius: 50%; overflow: hidden;
+  background: linear-gradient(135deg, var(--verde), var(--cian));
+  color: #04140d; font-weight: 800; line-height: 1; user-select: none;
+}
+.avatar-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.avatar-grande { box-shadow: 0 0 0 3px var(--borde), 0 10px 30px rgba(0, 0, 0, 0.35); }

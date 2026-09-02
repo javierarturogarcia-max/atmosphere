@@ -375,3 +375,31 @@ export function logoMutuu(tamano = 28, clase = '') {
     <circle cx="50" cy="50" r="3.4" fill="#e0f2fe"/>`;
   return svg;
 }
+
+/**
+ * Avatar circular: la foto si la hay, y si no la inicial sobre un degradado.
+ *
+ * El respaldo no es un adorno: en un muro, un hueco gris donde deberia haber
+ * una cara rompe la lectura de la tarjeta entera, y la mayoria de la gente no
+ * pone foto el primer dia.
+ *
+ * @param {{url?:string|null, nombre?:string, mote?:string}} quien
+ * @param {number} tamano lado en pixeles
+ */
+export function avatar(quien = {}, tamano = 34) {
+  const inicial = String(quien.mote || quien.nombre || '?').trim().slice(0, 1).toUpperCase();
+  const caja = el('span', {
+    clase: 'avatar',
+    estilo: `width:${tamano}px;height:${tamano}px;font-size:${Math.round(tamano * 0.42)}px`,
+    title: quien.mote ? `@${quien.mote}` : (quien.nombre || ''),
+  }, [el('span', { texto: inicial })]);
+
+  if (quien.url) {
+    const img = el('img', { src: quien.url, alt: '', clase: 'avatar-img' });
+    // Si la imagen no carga —borrada, red caida— se queda la inicial debajo en
+    // vez del icono de imagen rota.
+    img.addEventListener('error', () => img.remove(), { once: true });
+    caja.appendChild(img);
+  }
+  return caja;
+}

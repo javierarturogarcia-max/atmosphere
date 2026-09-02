@@ -78,9 +78,9 @@ guion, aparte del núcleo. Se instala igual:
 3. **Run**.
 
 Debe terminar con *Success. No rows returned*. Crea las 3 tablas nuevas
-(`publicaciones`, `megusta`, `reportes`), añade las columnas `mote` y `aura` a
-`perfiles`, las vistas `muro` y `virales`, y el cubo de almacenamiento
-`evidencias` para los vídeos.
+(`publicaciones`, `megusta`, `reportes`), añade las columnas `mote`, `avatar` y
+`aura` a `perfiles`, las vistas `muro` y `virales`, y el cubo de almacenamiento
+`evidencias` para los vídeos y las fotos de perfil.
 
 También es idempotente: puedes reejecutarlo sin miedo.
 

@@ -353,12 +353,6 @@ tr.destacada td { background: rgba(52, 211, 153, 0.09); font-weight: 650; }
   background: var(--superficie); border: 1px solid var(--borde);
   font-size: 12.5px; color: var(--texto-2);
 }
-.avatar-inicial {
-  width: 22px; height: 22px; border-radius: 50%;
-  display: grid; place-items: center;
-  background: linear-gradient(135deg, var(--verde), var(--cian));
-  color: #04140d; font-weight: 800; font-size: 11px;
-}
 
 @media (max-width: 620px) {
   .hero-bienvenida { padding: 24px 14px; }
@@ -397,6 +391,16 @@ tr.destacada td { background: rgba(52, 211, 153, 0.09); font-weight: 650; }
 }
 .abanico-op:hover { transform: scale(1.28); background: var(--superficie-2); }
 .abanico-op.activo { background: var(--superficie-2); box-shadow: inset 0 0 0 1.5px var(--verde); }
+
+/* ── Avatar ──────────────────────────────────────────────────────────────── */
+.avatar {
+  position: relative; flex: none; display: inline-grid; place-items: center;
+  border-radius: 50%; overflow: hidden;
+  background: linear-gradient(135deg, var(--verde), var(--cian));
+  color: #04140d; font-weight: 800; line-height: 1; user-select: none;
+}
+.avatar-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.avatar-grande { box-shadow: 0 0 0 3px var(--borde), 0 10px 30px rgba(0, 0, 0, 0.35); }
 
 </style>
 </head>
@@ -798,6 +802,34 @@ function logoMutuu(tamano = 28, clase = '') {
   return svg;
 }
 
+/**
+ * Avatar circular: la foto si la hay, y si no la inicial sobre un degradado.
+ *
+ * El respaldo no es un adorno: en un muro, un hueco gris donde deberia haber
+ * una cara rompe la lectura de la tarjeta entera, y la mayoria de la gente no
+ * pone foto el primer dia.
+ *
+ * @param {{url?:string|null, nombre?:string, mote?:string}} quien
+ * @param {number} tamano lado en pixeles
+ */
+function avatar(quien = {}, tamano = 34) {
+  const inicial = String(quien.mote || quien.nombre || '?').trim().slice(0, 1).toUpperCase();
+  const caja = el('span', {
+    clase: 'avatar',
+    estilo: `width:${tamano}px;height:${tamano}px;font-size:${Math.round(tamano * 0.42)}px`,
+    title: quien.mote ? `@${quien.mote}` : (quien.nombre || ''),
+  }, [el('span', { texto: inicial })]);
+
+  if (quien.url) {
+    const img = el('img', { src: quien.url, alt: '', clase: 'avatar-img' });
+    // Si la imagen no carga —borrada, red caida— se queda la inicial debajo en
+    // vez del icono de imagen rota.
+    img.addEventListener('error', () => img.remove(), { once: true });
+    caja.appendChild(img);
+  }
+  return caja;
+}
+
   __exp.el = el;
   __exp.esc = esc;
   __exp.num = num;
@@ -816,6 +848,7 @@ function logoMutuu(tamano = 28, clase = '') {
   __exp.modal = modal;
   __exp.vacio = vacio;
   __exp.logoMutuu = logoMutuu;
+  __exp.avatar = avatar;
 });
 
 __def("src/data/acciones.js", function (__exp, __req) {
@@ -4491,6 +4524,41 @@ function comoImagen(file) {
  * @returns {Promise<{tipo:'foto', blob:Blob, url:string, hash:string, exif:object,
  *                    ancho:number, alto:number, bytes:number, fechaArchivo:number}>}
  */
+/** Lado del avatar. Un circulo de 34-96 px no necesita mas. */
+const LADO_AVATAR = 320;
+
+/**
+ * Recorta una imagen a un cuadrado centrado del tamano del avatar.
+ *
+ * Se recorta y no se deforma: un avatar circular sobre una foto apaisada sin
+ * recortar deja a la persona estirada. Y se reduce a 320 px porque la
+ * miniatura normal de 1024 pesaria diez veces mas para verse igual dentro de
+ * un circulo de 40 px.
+ *
+ * @param {Blob} blob imagen de origen
+ * @returns {Promise<Blob>} JPEG cuadrado
+ */
+async function procesarAvatar(blob) {
+  if (blob.size > LIMITE_ARCHIVO_MB * 1048576) {
+    throw new Error(`La imagen pesa ${(blob.size / 1048576).toFixed(1)} MB y el limite es ${LIMITE_ARCHIVO_MB} MB.`);
+  }
+  const { img, revocar } = await comoImagen(blob);
+  try {
+    const lado = Math.min(img.width, img.height);
+    const dx = (img.width - lado) / 2;
+    const dy = (img.height - lado) / 2;
+    const lienzo = document.createElement('canvas');
+    lienzo.width = LADO_AVATAR;
+    lienzo.height = LADO_AVATAR;
+    const ctx = lienzo.getContext('2d');
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, dx, dy, lado, lado, 0, 0, LADO_AVATAR, LADO_AVATAR);
+    const salida = await new Promise((ok) => lienzo.toBlob(ok, 'image/jpeg', 0.85));
+    if (!salida) throw new Error('No se pudo procesar la imagen.');
+    return salida;
+  } finally { revocar(); }
+}
+
 async function procesarFoto(file) {
   if (file.size > LIMITE_ARCHIVO_MB * 1048576) {
     throw new Error(`La foto pesa ${(file.size / 1048576).toFixed(1)} MB y el limite es ${LIMITE_ARCHIVO_MB} MB.`);
@@ -4603,12 +4671,17 @@ async function procesarMedio(file) {
 }
 
 /** Crea el selector de archivo con captura directa de camara en movil. */
-function selectorMedio(alElegir, { video = true } = {}) {
+/**
+ * @param {(f:File) => void} alElegir
+ * @param {{video?:boolean, camara?:'environment'|'user'|false}} opciones
+ *        `camara` false deja elegir del carrete, que para una foto de perfil
+ *        es lo normal: forzar la camara trasera ahi seria estorbar.
+ */
+function selectorMedio(alElegir, { video = true, camara = 'environment' } = {}) {
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = video ? 'image/*,video/*' : 'image/*';
-  // En movil abre la camara trasera directamente en vez del carrete.
-  input.capture = 'environment';
+  if (camara) input.capture = camara;
   input.style.display = 'none';
   input.addEventListener('change', () => {
     const f = input.files?.[0];
@@ -4626,6 +4699,8 @@ function selectorMedio(alElegir, { video = true } = {}) {
   __exp.listarMedios = listarMedios;
   __exp.espacioUsadoMB = espacioUsadoMB;
   __exp.limpiarHuerfanos = limpiarHuerfanos;
+  __exp.LADO_AVATAR = LADO_AVATAR;
+  __exp.procesarAvatar = procesarAvatar;
   __exp.procesarFoto = procesarFoto;
   __exp.procesarVideo = procesarVideo;
   __exp.procesarMedio = procesarMedio;
@@ -9191,6 +9266,57 @@ async function fijarMote(mote) {
 }
 
 /**
+ * Sube la foto de perfil y la deja apuntada en el perfil.
+ *
+ * Va al mismo cubo que las pruebas y bajo la carpeta del propio perfil, asi que
+ * la reutiliza la politica que ya existe: cada quien escribe solo en lo suyo.
+ * En la fila se guarda la RUTA, no la imagen: meter la foto en el perfil la
+ * haria viajar entera en cada consulta del ranking y del muro.
+ *
+ * @param {Blob} blob imagen ya reescalada
+ * @returns {Promise<string>} ruta dentro del cubo
+ */
+async function subirAvatar(blob) {
+  const s = sesion();
+  if (!s?.perfilId) throw new ErrorNube('No has iniciado sesion.', 'sin_sesion');
+  const anterior = (await llamarAPI(
+    `/rest/v1/perfiles?id=eq.${s.perfilId}&select=avatar`))?.[0]?.avatar || null;
+
+  const ruta = await subirMedio(blob);
+  await llamarAPI(`/rest/v1/perfiles?id=eq.${s.perfilId}`, {
+    metodo: 'PATCH', cuerpo: { avatar: ruta }, cabeceras: { Prefer: 'return=minimal' },
+  });
+
+  // La anterior se borra DESPUES de apuntar la nueva. Al reves, un corte de red
+  // en medio dejaria el perfil apuntando a un archivo que ya no existe.
+  if (anterior && anterior !== ruta) await borrarMedioAlmacen(anterior).catch(() => {});
+  return ruta;
+}
+
+/** Quita la foto del perfil y borra el archivo. */
+async function quitarAvatar() {
+  const s = sesion();
+  if (!s?.perfilId) throw new ErrorNube('No has iniciado sesion.', 'sin_sesion');
+  const anterior = (await llamarAPI(
+    `/rest/v1/perfiles?id=eq.${s.perfilId}&select=avatar`))?.[0]?.avatar || null;
+  await llamarAPI(`/rest/v1/perfiles?id=eq.${s.perfilId}`, {
+    metodo: 'PATCH', cuerpo: { avatar: null }, cabeceras: { Prefer: 'return=minimal' },
+  });
+  if (anterior) await borrarMedioAlmacen(anterior).catch(() => {});
+}
+
+/** Borra un archivo del cubo. La politica solo deja borrar lo propio. */
+async function borrarMedioAlmacen(ruta) {
+  const cfg = configuracion();
+  const s = sesion();
+  if (!cfg || !s?.access_token || !ruta) return;
+  await fetch(`${cfg.url}/storage/v1/object/${CUBO}/${encodeURI(ruta)}`, {
+    method: 'DELETE',
+    headers: { apikey: cfg.anonKey, Authorization: `Bearer ${s.access_token}` },
+  });
+}
+
+/**
  * Mote reservado durante un alta que quedo pendiente de confirmar el correo.
  *
  * Cuando el proyecto exige confirmacion, el alta no devuelve sesion y todavia
@@ -9293,6 +9419,8 @@ function haceRato(iso) {
   __exp.alternarMeGusta = alternarMeGusta;
   __exp.reportar = reportar;
   __exp.fijarMote = fijarMote;
+  __exp.subirAvatar = subirAvatar;
+  __exp.quitarAvatar = quitarAvatar;
   __exp.guardarMotePendiente = guardarMotePendiente;
   __exp.motePendiente = motePendiente;
   __exp.vecindario = vecindario;
@@ -9302,7 +9430,7 @@ function haceRato(iso) {
 
 __def("src/ui/vistas/comunidad.js", function (__exp, __req) {
 /** comunidad.js — Muro de buenas acciones: clips cortos, me gusta y aura. */
-const { el, num, co2, toast, modal, vacio, esc, tarjetaMetrica, logoMutuu } = __req("src/ui/componentes.js");
+const { el, num, co2, toast, modal, vacio, esc, tarjetaMetrica, logoMutuu, avatar } = __req("src/ui/componentes.js");
 const social = __req("src/core/social.js");
 const api = __req("src/core/nube.js");
 const { accion, CATEGORIAS } = __req("src/data/acciones.js");
@@ -9522,6 +9650,7 @@ function tarjetaPublicacion(p, reaccionMia, ctx, repintar) {
     el('div', { estilo: 'padding:13px' }, [
       el('div', { clase: 'fila entre', estilo: 'margin-bottom:7px' }, [
         el('div', { clase: 'fila', estilo: 'gap:7px;min-width:0' }, [
+          avatar({ url: social.urlMedio(p.autor_avatar), nombre: p.autor_nombre, mote: p.autor_mote }, 26),
           el('strong', { estilo: 'font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap',
             texto: p.autor_mote ? `@${p.autor_mote}` : (p.autor_nombre || 'Alguien') }),
           el('span', { clase: 'pastilla', estilo: 'background:rgba(192,132,252,.16);color:var(--morado)',
@@ -10027,12 +10156,16 @@ async function hayDescargas() {
 
 __def("src/ui/vistas/perfil.js", function (__exp, __req) {
 /** perfil.js — Perfil, ajustes, datos y privacidad. */
-const { el, num, co2, litros, toast, modal, tarjetaMetrica, progreso, haceCuanto } = __req("src/ui/componentes.js");
+const { el, num, co2, litros, toast, modal, tarjetaMetrica, progreso, haceCuanto, avatar } = __req("src/ui/componentes.js");
 const { paisesOrdenados, pais } = __req("src/data/paises.js");
 const { progresion, RANGOS } = __req("src/core/nivel.js");
 const { indiceConfianza } = __req("src/core/validacion.js");
 const { accion } = __req("src/data/acciones.js");
 const { descargar } = __req("src/ui/descargas.js");
+const { procesarAvatar, selectorMedio, guardarMedio, leerMedio, borrarMedio } = __req("src/ui/medios.js");
+const { capturar, hayCamaraEnApp } = __req("src/ui/camara.js");
+const api = __req("src/core/nube.js");
+const social = __req("src/core/social.js");
 
 function vistaPerfil(ctx) {
   const estado = ctx.almacen.get();
@@ -10056,6 +10189,7 @@ function vistaPerfil(ctx) {
   raiz.appendChild(el('div', { clase: 'rejilla c2 seccion', estilo: 'align-items:start' }, [
     el('div', { clase: 'tarjeta' }, [
       el('h2', { texto: 'Identidad' }),
+      seccionFoto(ctx),
       el('div', { clase: 'col' }, [
         el('label', { clase: 'campo' }, ['Nombre', nombre]),
         el('label', { clase: 'campo' }, ['Pais (determina el mix electrico de tus calculos)', selPais]),
@@ -10212,6 +10346,119 @@ function vistaPerfil(ctx) {
   return raiz;
 }
 
+
+// ------------------------------------------------------------------- la foto
+
+/**
+ * Foto de perfil: ponerla, cambiarla y quitarla.
+ *
+ * DOS SITIOS, A PROPOSITO. La copia local vive en IndexedDB y hace que la app
+ * siga teniendo cara sin cuenta y sin conexion. Cuando hay sesion se sube
+ * ademas al almacen, porque una foto que solo tu ves no es una foto de perfil
+ * en una red social: la gracia es que aparezca junto a tu mote en el muro.
+ *
+ * Si la subida falla —sin red, sin permisos en el cubo— la foto local se queda
+ * puesta igual y se avisa. Perder la foto por un corte de red seria peor que
+ * tenerla solo en este dispositivo.
+ */
+function seccionFoto(ctx) {
+  const caja = el('div', { clase: 'fila seccion', estilo: 'gap:15px;align-items:center' });
+  const estado = ctx.almacen.get();
+  let urlLocal = null;
+
+  const pintar = () => {
+    caja.innerHTML = '';
+    const cara = avatar({
+      url: urlLocal || (estado.perfil.avatarRemoto ? social.urlMedio(estado.perfil.avatarRemoto) : null),
+      nombre: estado.perfil.nombre, mote: estado.perfil.mote,
+    }, 84);
+    cara.classList.add('avatar-grande');
+
+    const puestaYa = !!(urlLocal || estado.perfil.avatarRemoto);
+    caja.appendChild(cara);
+    caja.appendChild(el('div', { clase: 'crece' }, [
+      el('div', { clase: 'etiqueta', texto: 'Tu foto' }),
+      el('div', { clase: 'fila envuelve', estilo: 'gap:6px;margin-top:7px' }, [
+        hayCamaraEnApp() ? el('button', {
+          clase: 'btn s', texto: '📸 Hacer foto',
+          onclick: async () => {
+            const r = await capturar({ modo: 'foto' });
+            if (r) aplicar(r.blob);
+          },
+        }) : null,
+        el('button', { clase: 'btn s', texto: '🖼️ Elegir imagen', onclick: () => selector.click() }),
+        puestaYa ? el('button', { clase: 'btn s peligro', texto: 'Quitar', onclick: quitar }) : null,
+        selector,
+      ]),
+      el('div', { clase: 'mini', estilo: 'margin-top:6px', texto: api.haySesion()
+        ? 'Se ve junto a tu mote en el muro. Puedes cambiarla cuando quieras.'
+        : 'Sin cuenta se guarda solo en este dispositivo. Al entrar en la comunidad se subira para que aparezca en el muro.' }),
+    ]));
+  };
+
+  const selector = selectorMedio((f) => aplicar(f), { video: false, camara: false });
+
+  async function aplicar(origen) {
+    let recortada;
+    try {
+      recortada = await procesarAvatar(origen);
+    } catch (e) {
+      toast({ titulo: 'No se pudo usar esa imagen', texto: e.message, tipo: 'error', icono: '⛔' });
+      return;
+    }
+
+    // Primero lo local: es lo que hace que la cara aparezca al instante y lo
+    // que sobrevive si la red falla.
+    const id = `av_${Date.now().toString(36)}`;
+    const previo = estado.perfil.avatarLocal;
+    await guardarMedio({ id, blob: recortada, tipo: 'foto' });
+    if (previo) await borrarMedio(previo).catch(() => {});
+    if (urlLocal) URL.revokeObjectURL(urlLocal);
+    urlLocal = URL.createObjectURL(recortada);
+    ctx.almacen.actualizarPerfil({ avatarLocal: id });
+    estado.perfil.avatarLocal = id;
+    pintar();
+
+    if (!api.haySesion()) {
+      toast({ titulo: 'Foto guardada', icono: '🖼️', texto: 'Se ve solo en este dispositivo hasta que entres en la comunidad.' });
+      return;
+    }
+    try {
+      const ruta = await social.subirAvatar(recortada);
+      ctx.almacen.actualizarPerfil({ avatarRemoto: ruta });
+      estado.perfil.avatarRemoto = ruta;
+      toast({ titulo: 'Foto actualizada', icono: '🎉', texto: 'Ya aparece junto a tu mote en el muro.' });
+    } catch (e) {
+      toast({ titulo: 'Guardada aqui, pero no subida', tipo: 'alerta', icono: '⚠️',
+        texto: `${e.message} La foto sigue puesta en este dispositivo.` });
+    }
+    pintar();
+  }
+
+  async function quitar() {
+    if (estado.perfil.avatarLocal) await borrarMedio(estado.perfil.avatarLocal).catch(() => {});
+    if (urlLocal) { URL.revokeObjectURL(urlLocal); urlLocal = null; }
+    ctx.almacen.actualizarPerfil({ avatarLocal: null, avatarRemoto: null });
+    estado.perfil.avatarLocal = null;
+    estado.perfil.avatarRemoto = null;
+    if (api.haySesion()) await social.quitarAvatar().catch(() => {});
+    pintar();
+    toast({ titulo: 'Foto quitada', icono: '🗑️', texto: 'Vuelve a mostrarse tu inicial.' });
+  }
+
+  // La copia local se lee de IndexedDB, que es asincrono: se pinta primero con
+  // lo que haya y se repinta cuando llega.
+  pintar();
+  if (estado.perfil.avatarLocal) {
+    leerMedio(estado.perfil.avatarLocal).then((m) => {
+      if (!m?.blob) return;
+      urlLocal = URL.createObjectURL(m.blob);
+      pintar();
+    }).catch(() => {});
+  }
+  return caja;
+}
+
   __exp.vistaPerfil = vistaPerfil;
 });
 
@@ -10228,7 +10475,7 @@ __def("src/ui/vistas/bienvenida.js", function (__exp, __req) {
  * se elige un mote y se entra. La configuracion tecnica sigue existiendo, pero
  * en Perfil y para quien la necesite.
  */
-const { el, toast, esc, logoMutuu } = __req("src/ui/componentes.js");
+const { el, toast, esc, logoMutuu, avatar } = __req("src/ui/componentes.js");
 const api = __req("src/core/nube.js");
 const social = __req("src/core/social.js");
 const { paisesOrdenados } = __req("src/data/paises.js");
@@ -10359,7 +10606,7 @@ function quienHay() {
     }
     lista.appendChild(el('div', { clase: 'fila-avatares' },
       filas.map((f) => el('div', { clase: 'avatar-chip', title: `${f.puntos || 0} puntos` }, [
-        el('span', { clase: 'avatar-inicial', texto: (f.mote || f.nombre || '?').slice(0, 1).toUpperCase() }),
+        avatar({ url: social.urlMedio(f.avatar), nombre: f.nombre, mote: f.mote }, 22),
         el('span', { texto: f.mote ? `@${esc(f.mote)}` : esc(f.nombre || 'Guardián') }),
       ]))));
   }).catch(() => {

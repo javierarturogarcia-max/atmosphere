@@ -94,12 +94,15 @@ with comprobaciones as (
   -- Si esto falla, cualquiera puede escribir sus propios puntos desde la
   -- consola del navegador y el ranking deja de significar nada.
   union all
+  -- OJO: la misma lista blanca aparece tambien en la comprobacion 10.5, que
+  -- vigila el esquema entero. Al anadir una columna escribible hay que tocar
+  -- las dos, y esta prueba se pone en MAL si se olvida una.
   select 9, 'Antifraude',
          'El cliente SOLO puede escribir columnas inocuas del perfil',
          -- Lista blanca: 'mote' se anade con db/social.sql y tambien es inocua.
          -- Se comprueba que no haya NINGUNA columna fuera de ella y que esten
          -- las tres basicas; asi la comprobacion vale con capa social y sin ella.
-         coalesce(bool_and(column_name::text in ('nombre','pais','publico','mote')), false)
+         coalesce(bool_and(column_name::text in ('nombre','pais','publico','mote','avatar')), false)
            and count(*) filter (where column_name::text in ('nombre','pais','publico')) = 3,
          coalesce(string_agg(column_name::text, ', ' order by column_name::text), '(ninguna)')
     from information_schema.column_privileges
@@ -132,7 +135,7 @@ with comprobaciones as (
    where table_schema = 'public' and grantee in ('anon','authenticated')
      and privilege_type = 'UPDATE'
      and not (table_name = 'perfiles'
-              and column_name::text in ('nombre','pais','publico','mote'))
+              and column_name::text in ('nombre','pais','publico','mote','avatar'))
      and not (table_name = 'megusta' and column_name::text = 'tipo')
 
   -- 8. Estado de los datos --------------------------------------------------

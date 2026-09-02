@@ -597,6 +597,29 @@ publicación legítima. Para un aula o un centro educativo —el caso de uso rea
 el coste de ese abuso es bajo y reversible; el de no tener moderación ninguna,
 no.
 
+### La foto de perfil
+
+Va al mismo cubo y bajo la misma carpeta que las pruebas, así que reutiliza la
+política que ya existía: cada quien escribe solo dentro de la carpeta con su
+identificador. En la fila del perfil se guarda **la ruta, no la imagen** —meter
+la foto en la fila la haría viajar entera en cada consulta del ranking y del
+muro, que es justo donde más filas se piden a la vez.
+
+Dos detalles de orden que importan más de lo que parece:
+
+- **Se apunta la nueva antes de borrar la anterior.** Al revés, un corte de red
+  entre las dos operaciones dejaría el perfil apuntando a un archivo que ya no
+  existe.
+- **La copia local se guarda primero**, en IndexedDB. Si la subida falla, la
+  foto sigue puesta en el dispositivo y se avisa. Perder la foto por un fallo de
+  red sería peor que tenerla solo aquí.
+
+El muro **no copia** la foto en la publicación, aunque sí copia el mote y el
+aura. Copiarla haría que al cambiarla las tarjetas viejas siguieran mostrando la
+antigua, así que las vistas la leen con un `left join` sobre `perfiles`. El join
+es externo a propósito: si el perfil del autor no es público, la RLS lo deja
+invisible y un join normal haría desaparecer su publicación del muro entero.
+
 ### Los medios
 
 Los vídeos y fotos publicados van a un cubo de Storage llamado `evidencias`,
