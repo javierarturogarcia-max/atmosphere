@@ -17,9 +17,15 @@ const pkg = JSON.parse(readFileSync(resolve(RAIZ, 'package.json'), 'utf8'));
 const kb = (s) => `${(Buffer.byteLength(s) / 1024).toFixed(1)} kB`;
 if (!existsSync(resolve(RAIZ, 'dist'))) mkdirSync(resolve(RAIZ, 'dist'));
 
-const FUENTE = `<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+const PRECONEXION = `<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>`;
+
+const FUENTE = `${PRECONEXION}
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">`;
+
+// El juego suma una serif de titulos y de voz narrada.
+const FUENTE_JUEGO = `${PRECONEXION}
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700;9..144,900&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">`;
 
 // ========================================================== la aplicacion
 const app = empaquetar(resolve(RAIZ, 'src/main.js'));
@@ -86,7 +92,7 @@ const htmlJuego = `<!DOCTYPE html>
 <meta name="theme-color" content="#14100c">
 <meta name="color-scheme" content="dark">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌄</text></svg>">
-${FUENTE}
+${FUENTE_JUEGO}
 <style>
 ${cssJuego}
 </style>
@@ -98,7 +104,7 @@ ${ARRANQUE}
 writeFileSync(resolve(RAIZ, 'dist/juego.html'), htmlJuego);
 
 const fragmentoJuego = `<title>Monte Adentro</title>
-${FUENTE}
+${FUENTE_JUEGO}
 <style>
 ${cssJuego}
 </style>
