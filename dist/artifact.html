@@ -11196,8 +11196,20 @@ function iniciar(raiz) {
       lateral.appendChild(r.separador ? el('div', { clase: 'nav-sep' }) : botonNav(r));
     }
 
+    // Monte Adentro vive en su propia pagina: es un juego 3D a pantalla
+    // completa con su propio motor, y meterlo dentro de la carcasa de la app
+    // solo le quitaria sitio.
+    const enlaceJuego = el('a', {
+      clase: 'nav-item',
+      texto: '🌄  Monte Adentro',
+      title: 'Juego 3D: el nino del campo',
+      href: './juego.html',
+      estilo: 'margin-top:auto;text-decoration:none',
+    });
+    lateral.appendChild(enlaceJuego);
+
     const est = almacen.get();
-    lateral.appendChild(el('div', { estilo: 'margin-top:auto;padding:13px 11px 0' }, [
+    lateral.appendChild(el('div', { estilo: 'padding:13px 11px 0' }, [
       el('div', { clase: 'etiqueta', texto: 'Saldo' }),
       el('div', { clase: 'fila entre', estilo: 'margin-top:5px' }, [
         el('span', { clase: 'mono', estilo: 'font-weight:800;color:var(--ambar);font-size:17px', texto: num(est.perfil.puntos) }),
