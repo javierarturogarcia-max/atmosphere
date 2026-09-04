@@ -72,46 +72,13 @@ El aura **no se mezcla con los puntos**: los puntos son impacto físico, el aura
 
 ---
 
-## 🌄 Monte Adentro — el juego
-
-Dentro de este mismo repositorio vive un **juego 3D completo**, con su propio
-motor gráfico y sin una sola dependencia: [`juego.html`](juego.html).
-
-> Un niño que se cría en el campo. Aprende a cazar con hondilla, a leer el río
-> para pescar, a rebuscar comida en el monte, a sembrar y cuidar su milpa, y a
-> subir agua y leña a una casa donde no hay luz ni tubería. Cada día que la casa
-> tiene lo que necesita cuenta; cada cosa que aprende le abre algo que ayer no
-> podía hacer.
-
-**Superación, estrategia y acción.** La estrategia está en el peso (un cántaro
-lleno son diez kilos y el niño aguanta diecisiete: cada viaje al río es una
-decisión), en el calendario (el maíz se siembra con la primera lluvia, el trigo
-solo en verano) y en el viento (si sopla hacia el venado, te huele antes de que
-lo veas). La acción está en el pulso con el pez, en el tiro con la hondilla y en
-el hacha rajando leña.
-
-| | |
-|---|---|
-| **Motor** | WebGPU con respaldo automático a WebGL2 — sombras direccionales con PCF, instanciación, MSAA ×4, agua animada, cielo procedural con nubes y estrellas, niebla aérea y tonemapping ACES |
-| **Arte** | Ninguno: cada árbol, animal, casa y planta se genera con código |
-| **Mundo** | Valle de 240 × 240 m con río tallado, monte, potrero y milpa, generado de una semilla |
-| **Simulación** | Ciclo día/noche, dos estaciones, chubascos por hora, crecimiento de cultivos día a día, fauna con oído y olfato |
-| **Historia** | 8 capítulos con objetivos comprobables, ampliables escribiendo un objeto en un archivo de datos |
-| **Controles** | Teclado y ratón, mando y táctil |
-| **Tamaño** | 382 kB, un solo archivo, funciona sin conexión |
-
-Cómo ampliarlo (capítulos, objetos, cultivos, animales, recetas):
-**[docs/JUEGO.md](docs/JUEGO.md)**.
-
----
-
 ## Arranque rápido
 
 ```bash
-npm run dev      # servidor local en http://localhost:4173 (y /juego.html)
-npm test         # 260 pruebas (192 del motor de impacto + 68 del juego)
+npm run dev      # servidor local en http://localhost:4173
+npm test         # 192 pruebas del motor
 npm run test:db  # ejecuta el SQL contra un PostgreSQL real (PGlite): 30 + 31 comprobaciones
-npm run build    # genera dist/atmosphere.html y dist/juego.html (un archivo cada uno)
+npm run build    # genera dist/atmosphere.html (un solo archivo, sin dependencias)
 npm run verify   # pruebas + esquema + build
 ```
 
@@ -217,7 +184,6 @@ extra, no un requisito para servir el sitio.
 
 - **[CIENCIA.md](CIENCIA.md)** — metodología completa, factores, fuentes y limitaciones asumidas.
 - **[IDEAS.md](IDEAS.md)** — hoja de ruta y propuestas de evolución (v2, v3, modelos de sostenibilidad económica).
-- **[docs/JUEGO.md](docs/JUEGO.md)** — Monte Adentro: cómo se juega, mapa del código y cómo añadir capítulos, objetos y cultivos.
 
 ---
 

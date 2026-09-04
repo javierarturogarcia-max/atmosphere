@@ -15,14 +15,11 @@
  * la cache solo entra en juego cuando no hay red. Se pierde algun milisegundo
  * de carga; se gana que el codigo publicado sea el que la gente ejecuta.
  */
-const CACHE = 'atmosphere-v3';
+const CACHE = 'atmosphere-v2';
 
 const RECURSOS = [
   './', './index.html', './assets/styles.css', './manifest.webmanifest',
   './src/main.js', './src/ui/app.js', './src/ui/componentes.js',
-  // El juego: la portada y su hoja de estilo. El resto de modulos entra en
-  // cache la primera vez que se juega, que es cuando se descargan.
-  './juego.html', './assets/juego.css', './src/juego/main.js',
 ];
 
 self.addEventListener('install', (e) => {
