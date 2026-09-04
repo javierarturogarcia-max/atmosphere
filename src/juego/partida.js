@@ -162,9 +162,28 @@ export class Partida {
       if (posibles.length) {
         const cap = posibles[0];
         activarCapitulo(e, cap.id);
-        this.dialogo.mostrar(cap.intro, () => this.hud.aviso(`Capítulo: ${cap.titulo}`, 'premio', 5000));
+        this.dialogo.mostrar(cap.intro, () => {
+          this.hud.aviso(`Capítulo: ${cap.titulo}`, 'premio', 5000);
+          this._recordarControles();
+        });
       }
     }
+  }
+
+  /**
+   * La primera vez que se juega, los controles se recuerdan dentro del juego.
+   * Sin esto hay que acordarse de lo que decia la portada, y lo primero que
+   * hace cualquiera es quedarse quieto sin saber que tecla tocar.
+   */
+  _recordarControles() {
+    if (this.estado.contadores.pasos > 6) return;
+    const tactil = matchMedia('(pointer: coarse)').matches;
+    const guia = tactil
+      ? ['Palanca abajo a la izquierda para caminar', 'Arrastrá en la pantalla para mirar alrededor',
+        'El botón ✋ hace lo que diga el cartel de abajo']
+      : ['W A S D para caminar · Shift para correr', 'Arrastrá con el ratón para mirar alrededor',
+        'Acercate a algo y pulsá E: abajo sale lo que podés hacer'];
+    guia.forEach((texto, i) => setTimeout(() => this.hud.aviso(texto, 'neutro', 7000), 900 + i * 2600));
   }
 
   _comprobarCapitulo() {

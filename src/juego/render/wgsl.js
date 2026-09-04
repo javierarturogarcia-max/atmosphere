@@ -326,19 +326,25 @@ fn fs(e : SalidaA) -> @location(0) vec4<f32> {
   let intensidad = marco.dirSol.w;
   let fresnel = pow(1.0 - clamp(dot(n, v), 0.0, 1.0), 4.0);
   let reflejo = mix(aLineal(marco.horizonte.rgb), aLineal(marco.cenit.rgb), 0.55) * 1.15;
-  let hondo = mix(vec3(0.05, 0.13, 0.16), vec3(0.10, 0.24, 0.26), clamp(intensidad * 0.4, 0.0, 1.0));
-  let bajo = mix(vec3(0.22, 0.34, 0.28), vec3(0.42, 0.55, 0.44), clamp(intensidad * 0.4, 0.0, 1.0));
+  let hondo = mix(vec3(0.04, 0.11, 0.15), vec3(0.08, 0.21, 0.25), clamp(intensidad * 0.4, 0.0, 1.0));
+  let bajo = mix(vec3(0.16, 0.24, 0.20), vec3(0.30, 0.40, 0.31), clamp(intensidad * 0.4, 0.0, 1.0));
   let agua = mix(bajo, hondo, smoothstep(0.05, 0.75, e.prof));
 
-  var color = mix(agua, reflejo, clamp(fresnel * 0.9 + 0.06, 0.0, 1.0));
+  // El reflejo se limita: a ras de agua el fresnel se dispara y el rio se
+  // convertia en una plancha azul sin fondo ni corriente.
+  var color = mix(agua, reflejo, clamp(fresnel * 0.7 + 0.06, 0.0, 0.72));
+  let rizo = sin(e.mundo.x * 9.0 + t * 2.1) * sin(e.mundo.z * 7.3 - t * 1.7);
+  color = color * (1.0 + rizo * 0.09 * (0.35 + agitacion));
   let h = normalize(marco.dirSol.xyz + v);
   color = color + aLineal(marco.colorSol.rgb) * intensidad * pow(max(dot(n, h), 0.0), 240.0) * 2.6;
 
-  let espuma = smoothstep(0.13, 0.0, e.prof) * (0.55 + 0.45 * sin(t * 3.0 + e.mundo.x * 6.0 + e.mundo.z * 5.0));
-  color = mix(color, aLineal(vec3(0.92, 0.95, 0.95)), clamp(espuma, 0.0, 1.0) * 0.7);
+  // Espuma de orilla en manchas, no en bandas (ver glsl.js).
+  let patron = 0.5 + 0.5 * sin(e.mundo.x * 3.3 + t * 1.6) * sin(e.mundo.z * 2.9 - t * 1.1);
+  let espuma = smoothstep(0.07, 0.0, e.prof) * (0.3 + 0.7 * patron);
+  color = mix(color, aLineal(vec3(0.90, 0.94, 0.95)), clamp(espuma, 0.0, 1.0) * 0.45);
   color = aplicarNiebla(color, e.mundo);
 
-  let alfa = clamp(0.62 + fresnel * 0.38 + espuma * 0.4 + e.prof * 0.3, 0.0, 1.0);
+  let alfa = clamp(0.34 + e.prof * 0.55 + fresnel * 0.28 + espuma * 0.35, 0.0, 1.0);
   return vec4(aSRGB(aces(color)), alfa);
 }
 `;

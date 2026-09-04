@@ -739,19 +739,25 @@ fn fs(e : SalidaA) -> @location(0) vec4<f32> {
   let intensidad = marco.dirSol.w;
   let fresnel = pow(1.0 - clamp(dot(n, v), 0.0, 1.0), 4.0);
   let reflejo = mix(aLineal(marco.horizonte.rgb), aLineal(marco.cenit.rgb), 0.55) * 1.15;
-  let hondo = mix(vec3(0.05, 0.13, 0.16), vec3(0.10, 0.24, 0.26), clamp(intensidad * 0.4, 0.0, 1.0));
-  let bajo = mix(vec3(0.22, 0.34, 0.28), vec3(0.42, 0.55, 0.44), clamp(intensidad * 0.4, 0.0, 1.0));
+  let hondo = mix(vec3(0.04, 0.11, 0.15), vec3(0.08, 0.21, 0.25), clamp(intensidad * 0.4, 0.0, 1.0));
+  let bajo = mix(vec3(0.16, 0.24, 0.20), vec3(0.30, 0.40, 0.31), clamp(intensidad * 0.4, 0.0, 1.0));
   let agua = mix(bajo, hondo, smoothstep(0.05, 0.75, e.prof));
 
-  var color = mix(agua, reflejo, clamp(fresnel * 0.9 + 0.06, 0.0, 1.0));
+  // El reflejo se limita: a ras de agua el fresnel se dispara y el rio se
+  // convertia en una plancha azul sin fondo ni corriente.
+  var color = mix(agua, reflejo, clamp(fresnel * 0.7 + 0.06, 0.0, 0.72));
+  let rizo = sin(e.mundo.x * 9.0 + t * 2.1) * sin(e.mundo.z * 7.3 - t * 1.7);
+  color = color * (1.0 + rizo * 0.09 * (0.35 + agitacion));
   let h = normalize(marco.dirSol.xyz + v);
   color = color + aLineal(marco.colorSol.rgb) * intensidad * pow(max(dot(n, h), 0.0), 240.0) * 2.6;
 
-  let espuma = smoothstep(0.13, 0.0, e.prof) * (0.55 + 0.45 * sin(t * 3.0 + e.mundo.x * 6.0 + e.mundo.z * 5.0));
-  color = mix(color, aLineal(vec3(0.92, 0.95, 0.95)), clamp(espuma, 0.0, 1.0) * 0.7);
+  // Espuma de orilla en manchas, no en bandas (ver glsl.js).
+  let patron = 0.5 + 0.5 * sin(e.mundo.x * 3.3 + t * 1.6) * sin(e.mundo.z * 2.9 - t * 1.1);
+  let espuma = smoothstep(0.07, 0.0, e.prof) * (0.3 + 0.7 * patron);
+  color = mix(color, aLineal(vec3(0.90, 0.94, 0.95)), clamp(espuma, 0.0, 1.0) * 0.45);
   color = aplicarNiebla(color, e.mundo);
 
-  let alfa = clamp(0.62 + fresnel * 0.38 + espuma * 0.4 + e.prof * 0.3, 0.0, 1.0);
+  let alfa = clamp(0.34 + e.prof * 0.55 + fresnel * 0.28 + espuma * 0.35, 0.0, 1.0);
   return vec4(aSRGB(aces(color)), alfa);
 }
 `;
@@ -2191,24 +2197,34 @@ void main() {
 
   float fresnel = pow(1.0 - clamp(dot(n, v), 0.0, 1.0), 4.0);
   vec3 reflejo = mix(aLineal(uHorizonte), aLineal(uCenit), 0.55) * 1.15;
-  vec3 hondo = mix(vec3(0.05, 0.13, 0.16), vec3(0.10, 0.24, 0.26), clamp(uIntensidad * 0.4, 0.0, 1.0));
-  vec3 bajo = mix(vec3(0.22, 0.34, 0.28), vec3(0.42, 0.55, 0.44), clamp(uIntensidad * 0.4, 0.0, 1.0));
+  vec3 hondo = mix(vec3(0.04, 0.11, 0.15), vec3(0.08, 0.21, 0.25), clamp(uIntensidad * 0.4, 0.0, 1.0));
+  vec3 bajo = mix(vec3(0.16, 0.24, 0.20), vec3(0.30, 0.40, 0.31), clamp(uIntensidad * 0.4, 0.0, 1.0));
   vec3 agua = mix(bajo, hondo, smoothstep(0.05, 0.75, vProf));
 
-  vec3 color = mix(agua, reflejo, clamp(fresnel * 0.9 + 0.06, 0.0, 1.0));
+  // El reflejo se limita: a ras de agua el fresnel se dispara y el rio se
+  // convertia en una plancha azul sin fondo ni corriente.
+  vec3 color = mix(agua, reflejo, clamp(fresnel * 0.7 + 0.06, 0.0, 0.72));
+
+  // Rizado del viento: rompe el espejo justo donde antes se aplanaba.
+  float rizo = sin(vMundo.x * 9.0 + uTiempo * 2.1) * sin(vMundo.z * 7.3 - uTiempo * 1.7);
+  color *= 1.0 + rizo * 0.09 * (0.35 + uAgitacion);
 
   // Reflejo especular del sol: el camino de luz sobre el rio.
   vec3 h = normalize(uDirSol + v);
   color += aLineal(uColorSol) * uIntensidad * pow(max(dot(n, h), 0.0), 240.0) * 2.6;
 
-  // Espuma en la orilla y en las piedras.
-  float espuma = smoothstep(0.13, 0.0, vProf) * (0.55 + 0.45 * sin(uTiempo * 3.0 + vMundo.x * 6.0 + vMundo.z * 5.0));
-  color = mix(color, aLineal(vec3(0.92, 0.95, 0.95)), clamp(espuma, 0.0, 1.0) * 0.7);
+  // Espuma de orilla: solo en el ultimo palmo de agua y en manchas, no en
+  // bandas. Con una sola onda salian rayas paralelas por todo el vado.
+  float patron = 0.5 + 0.5 * sin(vMundo.x * 3.3 + uTiempo * 1.6) * sin(vMundo.z * 2.9 - uTiempo * 1.1);
+  float espuma = smoothstep(0.07, 0.0, vProf) * (0.3 + 0.7 * patron);
+  color = mix(color, aLineal(vec3(0.90, 0.94, 0.95)), clamp(espuma, 0.0, 1.0) * 0.45);
 
   color = aplicarNiebla(color, vMundo, uCamPos, aLineal(uNieblaColor), uNieblaDensidad,
                         uNieblaAltura, uDirSol, aLineal(uColorSol));
 
-  float alfa = clamp(0.62 + fresnel * 0.38 + espuma * 0.4 + vProf * 0.3, 0.0, 1.0);
+  // En el vado el agua es casi transparente y se ve la grava del fondo; en la
+  // poza tapa. Eso es lo que dice de un vistazo por donde se puede cruzar.
+  float alfa = clamp(0.34 + vProf * 0.55 + fresnel * 0.28 + espuma * 0.35, 0.0, 1.0);
   salida = vec4(aSRGB(aces(color)), alfa);
 }`;
 
@@ -6537,7 +6553,14 @@ const { nivel, bono } = __req("src/juego/reglas/habilidades.js");
 const { CULTIVOS } = __req("src/juego/contenido/cultivos.js");
 const { limitar, mezclar } = __req("src/juego/nucleo/mate.js");
 
-const RADIO_INTERACCION = 3.2;
+/**
+ * A que distancia se ofrece una accion. En tercera persona el nino se ve
+ * pequeno en pantalla, asi que un radio corto se siente como que el juego no
+ * responde: 4,5 m para lo fijo (cuadros, trampas) y algo mas para los arboles
+ * y troncos del monte, que son bultos grandes.
+ */
+const RADIO_INTERACCION = 4.5;
+const RADIO_RECURSO = 6.5;
 
 /**
  * Que tiene el nino a mano ahora mismo.
@@ -6555,18 +6578,20 @@ function interaccionesCerca(ctx) {
   const orilla = terreno.orillaCercana(jugador.x, jugador.z);
   const dOrilla = orilla ? dist(orilla[0], orilla[1]) : 999;
   if (profundidad > -0.6 || dOrilla < 4.5) {
-    ops.push({ id: 'beber', etiqueta: 'Beber agua', icono: '💧', distancia: 0.4 });
-    if (cuenta(inv, 'cantaro')) ops.push({ id: 'llenar', etiqueta: 'Llenar el cántaro', icono: '🏺', distancia: 0.5 });
-    ops.push({ id: 'banar', etiqueta: 'Bañarse en el río', icono: '🏊', distancia: 0.6 });
-    if (cuenta(inv, 'cana')) ops.push({ id: 'pescar', etiqueta: 'Pescar', icono: '🎣', distancia: 0.3 });
-    if (cuenta(inv, 'atarraya')) ops.push({ id: 'atarraya', etiqueta: 'Tirar la atarraya', icono: '🕸️', distancia: 0.35 });
-    ops.push({ id: 'buscar_ribera', etiqueta: 'Rebuscar en la orilla', icono: '🪨', distancia: 0.8 });
+    // El orden importa: la primera opcion es la que hace la tecla E, y lo que
+    // uno viene a hacer al rio es llenar el cantaro, no beber.
+    if (cuenta(inv, 'cantaro')) ops.push({ id: 'llenar', etiqueta: 'Llenar el cántaro', icono: '🏺', distancia: 0.2 });
+    if (cuenta(inv, 'cana')) ops.push({ id: 'pescar', etiqueta: 'Pescar', icono: '🎣', distancia: 0.35 });
+    if (cuenta(inv, 'atarraya')) ops.push({ id: 'atarraya', etiqueta: 'Tirar la atarraya', icono: '🕸️', distancia: 0.45 });
+    ops.push({ id: 'beber', etiqueta: 'Beber agua', icono: '💧', distancia: 0.6 });
+    ops.push({ id: 'banar', etiqueta: 'Bañarse en el río', icono: '🏊', distancia: 0.7 });
+    ops.push({ id: 'buscar_ribera', etiqueta: 'Rebuscar en la orilla', icono: '🪨', distancia: 0.9 });
   }
 
   // --- recursos del monte (frutales, matas, lena, troncos)
   for (const r of ctx.recursos || []) {
     const d = dist(r.x, r.z);
-    if (d > RADIO_INTERACCION + 1.4) continue;
+    if (d > RADIO_RECURSO) continue;
     const memoria = ctx.estado.recursos[r.id];
     const libre = !memoria || disponible(memoria, ctx.dia);
     if (r.tipo === 'frutal') {
@@ -6820,6 +6845,7 @@ function cargaRelativa(estado) {
 }
 
   __exp.RADIO_INTERACCION = RADIO_INTERACCION;
+  __exp.RADIO_RECURSO = RADIO_RECURSO;
   __exp.interaccionesCerca = interaccionesCerca;
   __exp.ejecutar = ejecutar;
   __exp.estadoCuadro = estadoCuadro;
@@ -8700,9 +8726,28 @@ class Partida {
       if (posibles.length) {
         const cap = posibles[0];
         activarCapitulo(e, cap.id);
-        this.dialogo.mostrar(cap.intro, () => this.hud.aviso(`Capítulo: ${cap.titulo}`, 'premio', 5000));
+        this.dialogo.mostrar(cap.intro, () => {
+          this.hud.aviso(`Capítulo: ${cap.titulo}`, 'premio', 5000);
+          this._recordarControles();
+        });
       }
     }
+  }
+
+  /**
+   * La primera vez que se juega, los controles se recuerdan dentro del juego.
+   * Sin esto hay que acordarse de lo que decia la portada, y lo primero que
+   * hace cualquiera es quedarse quieto sin saber que tecla tocar.
+   */
+  _recordarControles() {
+    if (this.estado.contadores.pasos > 6) return;
+    const tactil = matchMedia('(pointer: coarse)').matches;
+    const guia = tactil
+      ? ['Palanca abajo a la izquierda para caminar', 'Arrastrá en la pantalla para mirar alrededor',
+        'El botón ✋ hace lo que diga el cartel de abajo']
+      : ['W A S D para caminar · Shift para correr', 'Arrastrá con el ratón para mirar alrededor',
+        'Acercate a algo y pulsá E: abajo sale lo que podés hacer'];
+    guia.forEach((texto, i) => setTimeout(() => this.hud.aviso(texto, 'neutro', 7000), 900 + i * 2600));
   }
 
   _comprobarCapitulo() {

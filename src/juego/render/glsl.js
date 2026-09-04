@@ -397,23 +397,33 @@ void main() {
 
   float fresnel = pow(1.0 - clamp(dot(n, v), 0.0, 1.0), 4.0);
   vec3 reflejo = mix(aLineal(uHorizonte), aLineal(uCenit), 0.55) * 1.15;
-  vec3 hondo = mix(vec3(0.05, 0.13, 0.16), vec3(0.10, 0.24, 0.26), clamp(uIntensidad * 0.4, 0.0, 1.0));
-  vec3 bajo = mix(vec3(0.22, 0.34, 0.28), vec3(0.42, 0.55, 0.44), clamp(uIntensidad * 0.4, 0.0, 1.0));
+  vec3 hondo = mix(vec3(0.04, 0.11, 0.15), vec3(0.08, 0.21, 0.25), clamp(uIntensidad * 0.4, 0.0, 1.0));
+  vec3 bajo = mix(vec3(0.16, 0.24, 0.20), vec3(0.30, 0.40, 0.31), clamp(uIntensidad * 0.4, 0.0, 1.0));
   vec3 agua = mix(bajo, hondo, smoothstep(0.05, 0.75, vProf));
 
-  vec3 color = mix(agua, reflejo, clamp(fresnel * 0.9 + 0.06, 0.0, 1.0));
+  // El reflejo se limita: a ras de agua el fresnel se dispara y el rio se
+  // convertia en una plancha azul sin fondo ni corriente.
+  vec3 color = mix(agua, reflejo, clamp(fresnel * 0.7 + 0.06, 0.0, 0.72));
+
+  // Rizado del viento: rompe el espejo justo donde antes se aplanaba.
+  float rizo = sin(vMundo.x * 9.0 + uTiempo * 2.1) * sin(vMundo.z * 7.3 - uTiempo * 1.7);
+  color *= 1.0 + rizo * 0.09 * (0.35 + uAgitacion);
 
   // Reflejo especular del sol: el camino de luz sobre el rio.
   vec3 h = normalize(uDirSol + v);
   color += aLineal(uColorSol) * uIntensidad * pow(max(dot(n, h), 0.0), 240.0) * 2.6;
 
-  // Espuma en la orilla y en las piedras.
-  float espuma = smoothstep(0.13, 0.0, vProf) * (0.55 + 0.45 * sin(uTiempo * 3.0 + vMundo.x * 6.0 + vMundo.z * 5.0));
-  color = mix(color, aLineal(vec3(0.92, 0.95, 0.95)), clamp(espuma, 0.0, 1.0) * 0.7);
+  // Espuma de orilla: solo en el ultimo palmo de agua y en manchas, no en
+  // bandas. Con una sola onda salian rayas paralelas por todo el vado.
+  float patron = 0.5 + 0.5 * sin(vMundo.x * 3.3 + uTiempo * 1.6) * sin(vMundo.z * 2.9 - uTiempo * 1.1);
+  float espuma = smoothstep(0.07, 0.0, vProf) * (0.3 + 0.7 * patron);
+  color = mix(color, aLineal(vec3(0.90, 0.94, 0.95)), clamp(espuma, 0.0, 1.0) * 0.45);
 
   color = aplicarNiebla(color, vMundo, uCamPos, aLineal(uNieblaColor), uNieblaDensidad,
                         uNieblaAltura, uDirSol, aLineal(uColorSol));
 
-  float alfa = clamp(0.62 + fresnel * 0.38 + espuma * 0.4 + vProf * 0.3, 0.0, 1.0);
+  // En el vado el agua es casi transparente y se ve la grava del fondo; en la
+  // poza tapa. Eso es lo que dice de un vistazo por donde se puede cruzar.
+  float alfa = clamp(0.34 + vProf * 0.55 + fresnel * 0.28 + espuma * 0.35, 0.0, 1.0);
   salida = vec4(aSRGB(aces(color)), alfa);
 }`;

@@ -18,7 +18,14 @@ import { nivel, bono } from './habilidades.js';
 import { CULTIVOS } from '../contenido/cultivos.js';
 import { limitar, mezclar } from '../nucleo/mate.js';
 
-export const RADIO_INTERACCION = 3.2;
+/**
+ * A que distancia se ofrece una accion. En tercera persona el nino se ve
+ * pequeno en pantalla, asi que un radio corto se siente como que el juego no
+ * responde: 4,5 m para lo fijo (cuadros, trampas) y algo mas para los arboles
+ * y troncos del monte, que son bultos grandes.
+ */
+export const RADIO_INTERACCION = 4.5;
+export const RADIO_RECURSO = 6.5;
 
 /**
  * Que tiene el nino a mano ahora mismo.
@@ -36,18 +43,20 @@ export function interaccionesCerca(ctx) {
   const orilla = terreno.orillaCercana(jugador.x, jugador.z);
   const dOrilla = orilla ? dist(orilla[0], orilla[1]) : 999;
   if (profundidad > -0.6 || dOrilla < 4.5) {
-    ops.push({ id: 'beber', etiqueta: 'Beber agua', icono: '💧', distancia: 0.4 });
-    if (cuenta(inv, 'cantaro')) ops.push({ id: 'llenar', etiqueta: 'Llenar el cántaro', icono: '🏺', distancia: 0.5 });
-    ops.push({ id: 'banar', etiqueta: 'Bañarse en el río', icono: '🏊', distancia: 0.6 });
-    if (cuenta(inv, 'cana')) ops.push({ id: 'pescar', etiqueta: 'Pescar', icono: '🎣', distancia: 0.3 });
-    if (cuenta(inv, 'atarraya')) ops.push({ id: 'atarraya', etiqueta: 'Tirar la atarraya', icono: '🕸️', distancia: 0.35 });
-    ops.push({ id: 'buscar_ribera', etiqueta: 'Rebuscar en la orilla', icono: '🪨', distancia: 0.8 });
+    // El orden importa: la primera opcion es la que hace la tecla E, y lo que
+    // uno viene a hacer al rio es llenar el cantaro, no beber.
+    if (cuenta(inv, 'cantaro')) ops.push({ id: 'llenar', etiqueta: 'Llenar el cántaro', icono: '🏺', distancia: 0.2 });
+    if (cuenta(inv, 'cana')) ops.push({ id: 'pescar', etiqueta: 'Pescar', icono: '🎣', distancia: 0.35 });
+    if (cuenta(inv, 'atarraya')) ops.push({ id: 'atarraya', etiqueta: 'Tirar la atarraya', icono: '🕸️', distancia: 0.45 });
+    ops.push({ id: 'beber', etiqueta: 'Beber agua', icono: '💧', distancia: 0.6 });
+    ops.push({ id: 'banar', etiqueta: 'Bañarse en el río', icono: '🏊', distancia: 0.7 });
+    ops.push({ id: 'buscar_ribera', etiqueta: 'Rebuscar en la orilla', icono: '🪨', distancia: 0.9 });
   }
 
   // --- recursos del monte (frutales, matas, lena, troncos)
   for (const r of ctx.recursos || []) {
     const d = dist(r.x, r.z);
-    if (d > RADIO_INTERACCION + 1.4) continue;
+    if (d > RADIO_RECURSO) continue;
     const memoria = ctx.estado.recursos[r.id];
     const libre = !memoria || disponible(memoria, ctx.dia);
     if (r.tipo === 'frutal') {
